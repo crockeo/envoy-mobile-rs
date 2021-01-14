@@ -35,7 +35,7 @@ pub struct EngineBuilder<T> {
     engine_callbacks: EngineCallbacks<T>,
 }
 
-impl<T: Default> EngineBuilder<T> {
+impl<T: Default + Sync> EngineBuilder<T> {
     pub fn new(context: Arc<T>, log_level: LogLevel) -> Self {
         Self {
             context,
@@ -149,18 +149,12 @@ impl<T: Default> EngineBuilder<T> {
         self
     }
 
-    pub fn add_on_engine_running(mut self, on_engine_running: fn(&Arc<T>)) -> Self
-    where
-        T: Sync,
-    {
+    pub fn add_on_engine_running(mut self, on_engine_running: fn(&Arc<T>)) -> Self {
         self.engine_callbacks.on_engine_running = Some(on_engine_running);
         self
     }
 
-    pub fn add_on_exit(mut self, on_exit: fn(&Arc<T>)) -> Self
-    where
-        T: Sync,
-    {
+    pub fn add_on_exit(mut self, on_exit: fn(&Arc<T>)) -> Self {
         self.engine_callbacks.on_exit = Some(on_exit);
         self
     }
@@ -176,7 +170,7 @@ pub struct Engine<T> {
     handle: envoy_mobile_sys::envoy_engine_t,
 }
 
-impl<T> Engine<T> {
+impl<T: Sync> Engine<T> {
     fn new(
         config: String,
         log_level: LogLevel,
