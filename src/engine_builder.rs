@@ -1,25 +1,8 @@
-use envoy_mobile_sys;
+use std::sync::Arc;
 
-use std::ffi::{c_void, CStr, CString};
-use std::sync::{Arc, Mutex};
-
+use super::engine::{Engine, EngineCallbacks};
 use super::log_level::LogLevel;
-use super::result::{Error, Result};
-
-// TODO: someday move these over to type parameters so there can be no overhead in these callbacks.
-pub struct EngineCallbacks<T> {
-    on_engine_running: Option<fn(&Arc<T>)>,
-    on_exit: Option<fn(&Arc<T>)>,
-}
-
-impl<T> EngineCallbacks<T> {
-    fn new() -> Self {
-        Self {
-            on_engine_running: None,
-            on_exit: None,
-        }
-    }
-}
+use super::result::Result;
 
 pub struct EngineBuilder<T> {
     context: Arc<T>,
@@ -150,113 +133,14 @@ impl<T: Default> EngineBuilder<T> {
         self
     }
 
-    pub fn add_on_engine_running(
-        mut self,
-        on_engine_running: fn(&Arc<T>),
-    ) -> Self {
-        self.engine_callbacks.on_engine_running = Some(on_engine_running);
+    pub fn add_on_engine_running<U: 'static + Fn(&Arc<T>)>(mut self, on_engine_running: U) -> Self {
+        self.engine_callbacks.on_engine_running = Some(Box::new(on_engine_running));
         self
     }
 
-    pub fn add_on_exit(mut self, on_exit: fn(&Arc<T>)) -> Self {
-        self.engine_callbacks.on_exit = Some(on_exit);
+    pub fn add_on_exit<U: 'static + Fn(&Arc<T>)>(mut self, on_exit: U) -> Self {
+        self.engine_callbacks.on_exit = Some(Box::new(on_exit));
         self
     }
 }
 
-struct ContextWrapper<T> {
-    context: Arc<T>,
-    engine_callbacks: EngineCallbacks<T>,
-}
-
-pub struct Engine<T> {
-    context_wrapper_ptr: *mut ContextWrapper<T>,
-    handle: envoy_mobile_sys::envoy_engine_t,
-}
-
-impl<T> Engine<T> {
-    fn new(
-        config: String,
-        log_level: LogLevel,
-        context: Arc<T>,
-        engine_callbacks: EngineCallbacks<T>,
-    ) -> Result<Self> {
-        let context_wrapper = ContextWrapper {
-            context,
-            engine_callbacks,
-        };
-        let context_wrapper_ptr = Box::into_raw(Box::new(context_wrapper));
-
-        // SAFETY: This is trivially correct, so long as we trust envoy-mobile. Generally speaking,
-        // init_engine is nothing to worry about. Pay more attention to the call to run_engine.
-        let handle;
-        unsafe {
-            handle = envoy_mobile_sys::init_engine();
-        }
-        if handle == 0 {
-            return Err(Error::InvalidHandle);
-        }
-
-        let envoy_engine_callbacks = envoy_mobile_sys::envoy_engine_callbacks {
-            on_engine_running: Some(Engine::<T>::dispatch_on_engine_running),
-            on_exit: Some(Engine::<T>::dispatch_on_exit),
-            context: context_wrapper_ptr as *mut c_void,
-        };
-        let config_c_str = CString::new(config).unwrap();
-        let log_level_c_str = CString::new(log_level.to_string()).unwrap();
-
-        // SAFETY: This call is safe so long as the data going in is formatted correctly. A couple
-        // of common errors:
-        //   - The context portion of the envoy_engine_callbacks doesn't live long enough, causing
-        //     SIGSEGVs
-        //   - The config YAML is formatted improperly, and that causes a yaml-cpp error.
-        //   - Either of the strings aren't formatted correctly, causing buffer overflows.
-        let status;
-        unsafe {
-            status = envoy_mobile_sys::run_engine(
-                handle,
-                envoy_engine_callbacks,
-                config_c_str.as_bytes_with_nul().as_ptr() as *const i8,
-                log_level_c_str.as_bytes_with_nul().as_ptr() as *const i8,
-            );
-        }
-        if status == 1 {
-            return Err(Error::CouldNotInit);
-        }
-
-        Ok(
-           Self {
-                context_wrapper_ptr,
-                handle,
-           }
-        )
-    }
-
-    pub fn terminate(self) {
-        unsafe {
-            envoy_mobile_sys::terminate_engine(self.handle);
-        }
-    }
-
-    unsafe extern "C" fn dispatch_on_engine_running(context: *mut c_void) {
-        let context = context as *const ContextWrapper<T>;
-        if let Some(on_engine_running) = &(*context).engine_callbacks.on_engine_running {
-            on_engine_running(&(*context).context);
-        }
-    }
-
-    unsafe extern "C" fn dispatch_on_exit(context: *mut c_void) {
-        let context = context as *const ContextWrapper<T>;
-        if let Some(on_exit) = &(*context).engine_callbacks.on_exit {
-            on_exit(&(*context).context);
-        }
-    }
-}
-
-impl<T> Drop for Engine<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = Box::from_raw(self.context_wrapper_ptr);
-        }
-    }
-}

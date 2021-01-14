@@ -27,6 +27,7 @@ fn main() -> Result<()> {
 
     let engine = EngineBuilder::<NullCtx>::new(context.clone(), LogLevel::Info)
         .add_on_engine_running(on_engine_running)
+        .add_on_exit(on_exit)
         .build()?;
 
     {
@@ -40,5 +41,10 @@ fn main() -> Result<()> {
 }
 
 fn on_engine_running(context: &Arc<NullCtx>) {
+    println!("running");
     context.running.notify_one();
+}
+
+fn on_exit(context: &Arc<NullCtx>) {
+    println!("exiting");
 }
