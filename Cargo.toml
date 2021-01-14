@@ -1,0 +1,13 @@
+[package]
+name = "envoy-mobile"
+version = "0.1.0"
+authors = ["Cerek Hillen <cerekh@gmail.com>"]
+edition = "2018"
+description = "Rust-friendly envoy-mobile bindings"
+license = "Apache-2.0"
+homepage = "https://github.com/crockeo/envoy-mobile-rs"
+repository = "https://github.com/crockeo/envoy-mobile-rs"
+
+[dependencies]
+envoy-mobile-sys = { path = "../envoy-mobile-sys", version = "0.1.1" }
+futures = "0.3.9"
