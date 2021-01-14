@@ -1,3 +1,4 @@
+mod bridge_util;
 mod engine;
 mod log_level;
 mod result;
@@ -5,6 +6,7 @@ mod stream;
 
 use std::sync::{Arc, Condvar, Mutex};
 
+use bridge_util::Headers;
 use engine::EngineBuilder;
 use log_level::LogLevel;
 use result::Result;
@@ -52,6 +54,15 @@ fn main() -> Result<()> {
         .set_on_complete(|context| todo!())
         .set_on_cancel(|context| todo!())
         .build()?;
+
+    stream.send_headers(
+        Headers::new()
+            .add(":method", "GET")
+            .add(":scheme", "https")
+            .add(":authority", "www.google.com")
+            .add(":path", "/"),
+        true,
+    )?;
 
     engine.terminate();
 

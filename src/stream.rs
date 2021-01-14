@@ -3,17 +3,14 @@ use envoy_mobile_sys;
 use std::ffi::c_void;
 use std::sync::Arc;
 
+use crate::bridge_util::{self, Data, HTTPError, Headers};
 use crate::result::{Error, Result};
-
-pub struct Headers {}
-pub struct Data {}
-pub struct EnvoyError {}
 
 type OnHeaders<T> = fn(&Arc<T>, Headers, bool);
 type OnData<T> = fn(&Arc<T>, Data, bool);
 type OnMetadata<T> = fn(&Arc<T>, Headers);
 type OnTrailers<T> = fn(&Arc<T>, Headers);
-type OnError<T> = fn(&Arc<T>, EnvoyError);
+type OnError<T> = fn(&Arc<T>, HTTPError);
 type OnComplete<T> = fn(&Arc<T>);
 type OnCancel<T> = fn(&Arc<T>);
 
@@ -146,64 +143,141 @@ impl<T: Sync> Stream<T> {
     }
 
     pub fn send_headers(self, headers: Headers, end_stream: bool) -> Result<Self> {
-        todo!()
+        let status;
+        unsafe {
+            let envoy_headers = bridge_util::headers_as_envoy_headers(headers);
+            status = envoy_mobile_sys::send_headers(self.handle, envoy_headers, end_stream);
+        }
+        if status == 1 {
+            return Err(Error::FailedToSend("headers"));
+        }
+        Ok(self)
     }
 
     pub fn send_data(self, data: Data, end_stream: bool) -> Result<Self> {
-        todo!()
+        let status;
+        unsafe {
+            let envoy_data = bridge_util::data_as_envoy_data(data);
+            status = envoy_mobile_sys::send_data(self.handle, envoy_data, end_stream);
+        }
+        if status == 1 {
+            return Err(Error::FailedToSend("data"));
+        }
+        Ok(self)
     }
 
     pub fn send_metadata(self, metadata: Headers) -> Result<Self> {
-        todo!()
+        let status;
+        unsafe {
+            let envoy_metadata = bridge_util::headers_as_envoy_headers(metadata);
+            status = envoy_mobile_sys::send_metadata(self.handle, envoy_metadata);
+        }
+        if status == 1 {
+            return Err(Error::FailedToSend("metadata"));
+        }
+        Ok(self)
     }
 
     pub fn send_trailers(self, trailers: Headers) -> Result<Self> {
-        todo!()
+        let status;
+        unsafe {
+            let envoy_trailers = bridge_util::headers_as_envoy_headers(trailers);
+            status = envoy_mobile_sys::send_trailers(self.handle, envoy_trailers);
+        }
+        if status == 1 {
+            return Err(Error::FailedToSend("trailers"));
+        }
+        Ok(self)
     }
 
     unsafe extern "C" fn on_headers(
-        headers: envoy_mobile_sys::envoy_headers,
+        envoy_headers: envoy_mobile_sys::envoy_headers,
         end_stream: bool,
         context: *mut c_void,
     ) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_headers) = &(*context).stream_callbacks.on_headers {
+            on_headers(
+                &(*context).context,
+                bridge_util::envoy_headers_as_headers(envoy_headers),
+                end_stream,
+            );
+        }
+        context as *mut c_void
     }
 
     unsafe extern "C" fn on_data(
-        data: envoy_mobile_sys::envoy_data,
+        envoy_data: envoy_mobile_sys::envoy_data,
         end_stream: bool,
         context: *mut c_void,
     ) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_data) = &(*context).stream_callbacks.on_data {
+            on_data(
+                &(*context).context,
+                bridge_util::envoy_data_as_data(envoy_data),
+                end_stream,
+            );
+        }
+        context as *mut c_void
     }
 
     unsafe extern "C" fn on_metadata(
-        metadata: envoy_mobile_sys::envoy_headers,
+        envoy_metadata: envoy_mobile_sys::envoy_headers,
         context: *mut c_void,
     ) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_metadata) = &(*context).stream_callbacks.on_metadata {
+            on_metadata(
+                &(*context).context,
+                bridge_util::envoy_headers_as_headers(envoy_metadata),
+            );
+        }
+        context as *mut c_void
     }
 
     unsafe extern "C" fn on_trailers(
-        trailers: envoy_mobile_sys::envoy_headers,
+        envoy_trailers: envoy_mobile_sys::envoy_headers,
         context: *mut c_void,
     ) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_trailers) = &(*context).stream_callbacks.on_trailers {
+            on_trailers(
+                &(*context).context,
+                bridge_util::envoy_headers_as_headers(envoy_trailers),
+            );
+        }
+        context as *mut c_void
     }
 
     unsafe extern "C" fn on_error(
-        error: envoy_mobile_sys::envoy_error,
+        envoy_error: envoy_mobile_sys::envoy_error,
         context: *mut c_void,
     ) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_error) = &(*context).stream_callbacks.on_error {
+            on_error(
+                &(*context).context,
+                bridge_util::envoy_error_as_error(envoy_error),
+            );
+        }
+        context as *mut c_void
     }
 
     unsafe extern "C" fn on_complete(context: *mut c_void) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_complete) = &(*context).stream_callbacks.on_complete {
+            on_complete(&(*context).context);
+        }
+        context as *mut c_void
     }
 
     unsafe extern "C" fn on_cancel(context: *mut c_void) -> *mut c_void {
-        todo!()
+        let context = context as *const StreamContextWrapper<T>;
+        if let Some(on_cancel) = &(*context).stream_callbacks.on_cancel {
+            on_cancel(&(*context).context);
+        }
+        context as *mut c_void
     }
 }
 
