@@ -149,15 +149,18 @@ impl<T: Default> EngineBuilder<T> {
         self
     }
 
-    pub fn add_on_engine_running(
-        mut self,
-        on_engine_running: fn(&Arc<T>),
-    ) -> Self {
+    pub fn add_on_engine_running(mut self, on_engine_running: fn(&Arc<T>)) -> Self
+    where
+        T: Sync,
+    {
         self.engine_callbacks.on_engine_running = Some(on_engine_running);
         self
     }
 
-    pub fn add_on_exit(mut self, on_exit: fn(&Arc<T>)) -> Self {
+    pub fn add_on_exit(mut self, on_exit: fn(&Arc<T>)) -> Self
+    where
+        T: Sync,
+    {
         self.engine_callbacks.on_exit = Some(on_exit);
         self
     }
@@ -223,12 +226,10 @@ impl<T> Engine<T> {
             return Err(Error::CouldNotInit);
         }
 
-        Ok(
-           Self {
-                context_wrapper_ptr,
-                handle,
-           }
-        )
+        Ok(Self {
+            context_wrapper_ptr,
+            handle,
+        })
     }
 
     pub fn terminate(self) {

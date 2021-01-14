@@ -13,7 +13,7 @@ impl ToString for LogLevel {
             Info => "info",
             Warning => "warn",
             Error => "error",
-        }.to_string()
+        }
+        .to_string()
     }
 }
-
