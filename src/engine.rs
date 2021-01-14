@@ -1,12 +1,11 @@
 use envoy_mobile_sys;
 
 use std::ffi::{c_void, CStr, CString};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::log_level::LogLevel;
 use super::result::{Error, Result};
 
-// TODO: someday move these over to type parameters so there can be no overhead in these callbacks.
 pub struct EngineCallbacks<T> {
     on_engine_running: Option<fn(&Arc<T>)>,
     on_exit: Option<fn(&Arc<T>)>,
@@ -164,13 +163,13 @@ impl<T: Default> EngineBuilder<T> {
     }
 }
 
-struct ContextWrapper<T> {
+struct EngineContextWrapper<T> {
     context: Arc<T>,
     engine_callbacks: EngineCallbacks<T>,
 }
 
 pub struct Engine<T> {
-    context_wrapper_ptr: *mut ContextWrapper<T>,
+    context_wrapper_ptr: *mut EngineContextWrapper<T>,
     handle: envoy_mobile_sys::envoy_engine_t,
 }
 
@@ -181,7 +180,7 @@ impl<T> Engine<T> {
         context: Arc<T>,
         engine_callbacks: EngineCallbacks<T>,
     ) -> Result<Self> {
-        let context_wrapper = ContextWrapper {
+        let context_wrapper = EngineContextWrapper {
             context,
             engine_callbacks,
         };
@@ -239,14 +238,14 @@ impl<T> Engine<T> {
     }
 
     unsafe extern "C" fn dispatch_on_engine_running(context: *mut c_void) {
-        let context = context as *const ContextWrapper<T>;
+        let context = context as *const EngineContextWrapper<T>;
         if let Some(on_engine_running) = &(*context).engine_callbacks.on_engine_running {
             on_engine_running(&(*context).context);
         }
     }
 
     unsafe extern "C" fn dispatch_on_exit(context: *mut c_void) {
-        let context = context as *const ContextWrapper<T>;
+        let context = context as *const EngineContextWrapper<T>;
         if let Some(on_exit) = &(*context).engine_callbacks.on_exit {
             on_exit(&(*context).context);
         }
