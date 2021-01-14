@@ -1,0 +1,226 @@
+use envoy_mobile_sys;
+
+use std::ffi::c_void;
+use std::sync::Arc;
+
+use crate::result::{Error, Result};
+
+pub struct Headers {}
+pub struct Data {}
+pub struct EnvoyError {}
+
+type OnHeaders<T> = fn(&Arc<T>, Headers, bool);
+type OnData<T> = fn(&Arc<T>, Data, bool);
+type OnMetadata<T> = fn(&Arc<T>, Headers);
+type OnTrailers<T> = fn(&Arc<T>, Headers);
+type OnError<T> = fn(&Arc<T>, EnvoyError);
+type OnComplete<T> = fn(&Arc<T>);
+type OnCancel<T> = fn(&Arc<T>);
+
+struct StreamCallbacks<T> {
+    on_headers: Option<OnHeaders<T>>,
+    on_data: Option<OnData<T>>,
+    on_metadata: Option<OnMetadata<T>>,
+    on_trailers: Option<OnTrailers<T>>,
+    on_error: Option<OnError<T>>,
+    on_complete: Option<OnComplete<T>>,
+    on_cancel: Option<OnCancel<T>>,
+}
+
+impl<T> StreamCallbacks<T> {
+    fn new() -> Self {
+        Self {
+            on_headers: None,
+            on_data: None,
+            on_metadata: None,
+            on_trailers: None,
+            on_error: None,
+            on_complete: None,
+            on_cancel: None,
+        }
+    }
+}
+
+pub struct StreamBuilder<T> {
+    context: Arc<T>,
+    handle: envoy_mobile_sys::envoy_engine_t,
+    stream_callbacks: StreamCallbacks<T>,
+}
+
+impl<T: Sync> StreamBuilder<T> {
+    pub fn new(context: Arc<T>, handle: envoy_mobile_sys::envoy_stream_t) -> Self {
+        Self {
+            context,
+            handle,
+            stream_callbacks: StreamCallbacks::new(),
+        }
+    }
+
+    pub fn build(self) -> Result<Stream<T>> {
+        Stream::new(self.context, self.handle, self.stream_callbacks)
+    }
+
+    pub fn set_on_headers(mut self, on_headers: OnHeaders<T>) -> Self {
+        self.stream_callbacks.on_headers = Some(on_headers);
+        self
+    }
+
+    pub fn set_on_data(mut self, on_data: OnData<T>) -> Self {
+        self.stream_callbacks.on_data = Some(on_data);
+        self
+    }
+
+    pub fn set_on_metadata(mut self, on_metadata: OnMetadata<T>) -> Self {
+        self.stream_callbacks.on_metadata = Some(on_metadata);
+        self
+    }
+
+    pub fn set_on_trailers(mut self, on_trailers: OnTrailers<T>) -> Self {
+        self.stream_callbacks.on_trailers = Some(on_trailers);
+        self
+    }
+
+    pub fn set_on_error(mut self, on_error: OnError<T>) -> Self {
+        self.stream_callbacks.on_error = Some(on_error);
+        self
+    }
+
+    pub fn set_on_complete(mut self, on_complete: OnComplete<T>) -> Self {
+        self.stream_callbacks.on_complete = Some(on_complete);
+        self
+    }
+
+    pub fn set_on_cancel(mut self, on_cancel: OnCancel<T>) -> Self {
+        self.stream_callbacks.on_cancel = Some(on_cancel);
+        self
+    }
+}
+
+struct StreamContextWrapper<T> {
+    context: Arc<T>,
+    stream_callbacks: StreamCallbacks<T>,
+}
+
+// TODO: restructure this API so that only valid actions can be taken on a Stream; e.g. once you've
+// send data ensure the user can't try to send headers again
+pub struct Stream<T> {
+    context_wrapper_ptr: *mut StreamContextWrapper<T>,
+    handle: envoy_mobile_sys::envoy_stream_t,
+}
+
+impl<T: Sync> Stream<T> {
+    fn new(
+        context: Arc<T>,
+        handle: envoy_mobile_sys::envoy_stream_t,
+        stream_callbacks: StreamCallbacks<T>,
+    ) -> Result<Self> {
+        let context_wrapper = StreamContextWrapper {
+            context,
+            stream_callbacks,
+        };
+        let context_wrapper_ptr = Box::into_raw(Box::new(context_wrapper));
+
+        let envoy_stream_callbacks = envoy_mobile_sys::envoy_http_callbacks {
+            on_headers: Some(Stream::<T>::on_headers),
+            on_data: Some(Stream::<T>::on_data),
+            on_metadata: Some(Stream::<T>::on_metadata),
+            on_trailers: Some(Stream::<T>::on_trailers),
+            on_error: Some(Stream::<T>::on_error),
+            on_complete: Some(Stream::<T>::on_complete),
+            on_cancel: Some(Stream::<T>::on_cancel),
+            context: context_wrapper_ptr as *mut c_void,
+        };
+
+        let status;
+        unsafe {
+            status = envoy_mobile_sys::start_stream(handle, envoy_stream_callbacks);
+        }
+        if status == 1 {
+            return Err(Error::CouldNotInit);
+        }
+
+        Ok(Self {
+            context_wrapper_ptr,
+            handle,
+        })
+    }
+
+    pub fn send_headers(self, headers: Headers, end_stream: bool) -> Result<Self> {
+        todo!()
+    }
+
+    pub fn send_data(self, data: Data, end_stream: bool) -> Result<Self> {
+        todo!()
+    }
+
+    pub fn send_metadata(self, metadata: Headers) -> Result<Self> {
+        todo!()
+    }
+
+    pub fn send_trailers(self, trailers: Headers) -> Result<Self> {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_headers(
+        headers: envoy_mobile_sys::envoy_headers,
+        end_stream: bool,
+        context: *mut c_void,
+    ) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_data(
+        data: envoy_mobile_sys::envoy_data,
+        end_stream: bool,
+        context: *mut c_void,
+    ) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_metadata(
+        metadata: envoy_mobile_sys::envoy_headers,
+        context: *mut c_void,
+    ) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_trailers(
+        trailers: envoy_mobile_sys::envoy_headers,
+        context: *mut c_void,
+    ) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_error(
+        error: envoy_mobile_sys::envoy_error,
+        context: *mut c_void,
+    ) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_complete(context: *mut c_void) -> *mut c_void {
+        todo!()
+    }
+
+    unsafe extern "C" fn on_cancel(context: *mut c_void) -> *mut c_void {
+        todo!()
+    }
+}
+
+impl<T> Drop for Stream<T> {
+    fn drop(&mut self) {
+        // SAFETY: this is trivially safe, as:
+        //   - if handle is invalid, nothing happens
+        //   - if the handle is already reset, nothing happens
+        //   - if the handle is valid and active, it gets reset
+        unsafe {
+            envoy_mobile_sys::reset_stream(self.handle);
+        }
+
+        // SAFETY: this field is only ever populated by the Box::into_raw(Box::new(...)) above, so
+        // we can cast it back into a Box.
+        unsafe {
+            let _ = Box::from_raw(self.context_wrapper_ptr);
+        }
+    }
+}

@@ -1,6 +1,7 @@
 mod engine;
 mod log_level;
 mod result;
+mod stream;
 
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -22,12 +23,19 @@ impl Default for NullCtx {
     }
 }
 
+struct StreamContext {}
+
+impl StreamContext {
+    fn new() -> Self {
+        Self {}
+    }
+}
+
 fn main() -> Result<()> {
     let context = Arc::new(NullCtx::default());
 
     let engine = EngineBuilder::<NullCtx>::new(context.clone(), LogLevel::Info)
-        .add_on_engine_running(on_engine_running)
-        .add_on_exit(on_exit)
+        .add_on_engine_running(|context| context.running.notify_one())
         .build()?;
 
     {
@@ -35,16 +43,17 @@ fn main() -> Result<()> {
         let _ = context.running.wait(running_lock).unwrap();
     }
 
+    let stream_context = Arc::new(StreamContext::new());
+    let stream = engine
+        .stream_builder(stream_context)
+        .set_on_headers(|context, headers, end_stream| todo!())
+        .set_on_data(|context, data, end_stream| todo!())
+        .set_on_error(|context, error| todo!())
+        .set_on_complete(|context| todo!())
+        .set_on_cancel(|context| todo!())
+        .build()?;
+
     engine.terminate();
 
     Ok(())
-}
-
-fn on_engine_running(context: &Arc<NullCtx>) {
-    println!("running");
-    context.running.notify_one();
-}
-
-fn on_exit(context: &Arc<NullCtx>) {
-    println!("exiting");
 }

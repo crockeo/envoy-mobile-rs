@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::log_level::LogLevel;
 use super::result::{Error, Result};
+use super::stream::StreamBuilder;
 
 pub struct EngineCallbacks<T> {
     on_engine_running: Option<fn(&Arc<T>)>,
@@ -224,6 +225,15 @@ impl<T: Sync> Engine<T> {
             context_wrapper_ptr,
             handle,
         })
+    }
+
+    pub fn stream_builder<U: Sync>(&self, context: Arc<U>) -> StreamBuilder<U> {
+        // SAFETY: this is trivially safe; guaranteed not to fail.
+        let stream_handle;
+        unsafe {
+            stream_handle = envoy_mobile_sys::init_stream(self.handle);
+        }
+        StreamBuilder::new(context, stream_handle)
     }
 
     pub fn terminate(self) {
