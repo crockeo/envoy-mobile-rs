@@ -29,8 +29,6 @@ fn main() -> Result<()> {
         .add_on_engine_running(on_engine_running)
         .build()?;
 
-    println!("waiting!");
-
     {
         let running_lock = context.running_lock.lock().unwrap();
         let _ = context.running.wait(running_lock).unwrap();
