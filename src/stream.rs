@@ -1,6 +1,7 @@
 use envoy_mobile_sys;
 
 use std::ffi::c_void;
+use std::ptr;
 use std::sync::Arc;
 
 use crate::bridge_util::{self, Data, HTTPError, Headers};
@@ -200,7 +201,7 @@ impl<T: Sync> Stream<T> {
                 end_stream,
             );
         }
-        context as *mut c_void
+        ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn on_data(
@@ -216,7 +217,7 @@ impl<T: Sync> Stream<T> {
                 end_stream,
             );
         }
-        context as *mut c_void
+        ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn on_metadata(
@@ -230,7 +231,7 @@ impl<T: Sync> Stream<T> {
                 Headers::from_envoy_headers(envoy_metadata),
             );
         }
-        context as *mut c_void
+        ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn on_trailers(
@@ -244,42 +245,45 @@ impl<T: Sync> Stream<T> {
                 Headers::from_envoy_headers(envoy_trailers),
             );
         }
-        context as *mut c_void
+        ptr::null_mut::<c_void>()
     }
 
+    // TODO: try to elicit an error where none of these are called and we leak the context. i'm
+    // not sure if it's possible but i want to try
     unsafe extern "C" fn on_error(
         envoy_error: envoy_mobile_sys::envoy_error,
         context: *mut c_void,
     ) -> *mut c_void {
-        let context = context as *const StreamContextWrapper<T>;
+        let context = context as *mut StreamContextWrapper<T>;
         if let Some(on_error) = &(*context).stream_callbacks.on_error {
             on_error(
                 &(*context).context,
                 HTTPError::from_envoy_error(envoy_error),
             );
         }
-        context as *mut c_void
+        let _ = Box::from_raw(context);
+        ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn on_complete(context: *mut c_void) -> *mut c_void {
-        let context = context as *const StreamContextWrapper<T>;
+        let context = context as *mut StreamContextWrapper<T>;
         if let Some(on_complete) = &(*context).stream_callbacks.on_complete {
             on_complete(&(*context).context);
         }
-        context as *mut c_void
+        let _ = Box::from_raw(context);
+        ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn on_cancel(context: *mut c_void) -> *mut c_void {
-        let context = context as *const StreamContextWrapper<T>;
+        let context = context as *mut StreamContextWrapper<T>;
         if let Some(on_cancel) = &(*context).stream_callbacks.on_cancel {
             on_cancel(&(*context).context);
         }
-        context as *mut c_void
+        let _ = Box::from_raw(context);
+        ptr::null_mut::<c_void>()
     }
 }
 
-// TODO: if a stream is dropped while a stream is in-flight then you'll segfault because the
-// context will be freed before on_cancel runs
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
         // SAFETY: this is trivially safe, as:
@@ -288,12 +292,6 @@ impl<T> Drop for Stream<T> {
         //   - if the handle is valid and active, it gets reset
         unsafe {
             envoy_mobile_sys::reset_stream(self.handle);
-        }
-
-        // SAFETY: this field is only ever populated by the Box::into_raw(Box::new(...)) above, so
-        // we can cast it back into a Box.
-        unsafe {
-            let _ = Box::from_raw(self.context_wrapper_ptr);
         }
     }
 }
