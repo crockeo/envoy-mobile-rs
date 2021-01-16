@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     }
 
     let stream_context = Arc::new(StreamContext::new());
-    let stream = engine
+    let mut stream = engine
         .stream_builder(stream_context.clone())
         .set_on_headers(|_, _, _| {
             println!("headers");
@@ -76,7 +76,7 @@ fn main() -> Result<()> {
         })
         .build()?;
 
-    let stream = stream.send_headers(
+    stream.send_headers(
         Headers::new()
             .add(":method", "GET")
             .add(":scheme", "https")

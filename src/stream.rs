@@ -143,7 +143,7 @@ impl<T: Sync> Stream<T> {
         })
     }
 
-    pub fn send_headers(self, headers: Headers, end_stream: bool) -> Result<Self> {
+    pub fn send_headers(&mut self, headers: Headers, end_stream: bool) -> Result<&mut Self> {
         let status;
         unsafe {
             status =
@@ -155,7 +155,7 @@ impl<T: Sync> Stream<T> {
         Ok(self)
     }
 
-    pub fn send_data(self, data: Data, end_stream: bool) -> Result<Self> {
+    pub fn send_data(&mut self, data: Data, end_stream: bool) -> Result<&mut Self> {
         let status;
         unsafe {
             status = envoy_mobile_sys::send_data(self.handle, data.as_envoy_data(), end_stream);
@@ -166,7 +166,7 @@ impl<T: Sync> Stream<T> {
         Ok(self)
     }
 
-    pub fn send_metadata(self, metadata: Headers) -> Result<Self> {
+    pub fn send_metadata(&mut self, metadata: Headers) -> Result<&mut Self> {
         let status;
         unsafe {
             status = envoy_mobile_sys::send_metadata(self.handle, metadata.as_envoy_headers());
@@ -177,7 +177,7 @@ impl<T: Sync> Stream<T> {
         Ok(self)
     }
 
-    pub fn send_trailers(self, trailers: Headers) -> Result<Self> {
+    pub fn send_trailers(&mut self, trailers: Headers) -> Result<&mut Self> {
         let status;
         unsafe {
             status = envoy_mobile_sys::send_trailers(self.handle, trailers.as_envoy_headers());
