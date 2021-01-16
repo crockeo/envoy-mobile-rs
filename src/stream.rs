@@ -145,8 +145,8 @@ impl<T: Sync> Stream<T> {
     pub fn send_headers(self, headers: Headers, end_stream: bool) -> Result<Self> {
         let status;
         unsafe {
-            let envoy_headers = bridge_util::headers_as_envoy_headers(headers);
-            status = envoy_mobile_sys::send_headers(self.handle, envoy_headers, end_stream);
+            status =
+                envoy_mobile_sys::send_headers(self.handle, headers.as_envoy_headers(), end_stream);
         }
         if status == 1 {
             return Err(Error::FailedToSend("headers"));
@@ -157,8 +157,7 @@ impl<T: Sync> Stream<T> {
     pub fn send_data(self, data: Data, end_stream: bool) -> Result<Self> {
         let status;
         unsafe {
-            let envoy_data = bridge_util::data_as_envoy_data(data);
-            status = envoy_mobile_sys::send_data(self.handle, envoy_data, end_stream);
+            status = envoy_mobile_sys::send_data(self.handle, data.as_envoy_data(), end_stream);
         }
         if status == 1 {
             return Err(Error::FailedToSend("data"));
@@ -169,8 +168,7 @@ impl<T: Sync> Stream<T> {
     pub fn send_metadata(self, metadata: Headers) -> Result<Self> {
         let status;
         unsafe {
-            let envoy_metadata = bridge_util::headers_as_envoy_headers(metadata);
-            status = envoy_mobile_sys::send_metadata(self.handle, envoy_metadata);
+            status = envoy_mobile_sys::send_metadata(self.handle, metadata.as_envoy_headers());
         }
         if status == 1 {
             return Err(Error::FailedToSend("metadata"));
@@ -181,8 +179,7 @@ impl<T: Sync> Stream<T> {
     pub fn send_trailers(self, trailers: Headers) -> Result<Self> {
         let status;
         unsafe {
-            let envoy_trailers = bridge_util::headers_as_envoy_headers(trailers);
-            status = envoy_mobile_sys::send_trailers(self.handle, envoy_trailers);
+            status = envoy_mobile_sys::send_trailers(self.handle, trailers.as_envoy_headers());
         }
         if status == 1 {
             return Err(Error::FailedToSend("trailers"));
@@ -199,7 +196,7 @@ impl<T: Sync> Stream<T> {
         if let Some(on_headers) = &(*context).stream_callbacks.on_headers {
             on_headers(
                 &(*context).context,
-                bridge_util::envoy_headers_as_headers(envoy_headers),
+                Headers::from_envoy_headers(envoy_headers),
                 end_stream,
             );
         }
@@ -215,7 +212,7 @@ impl<T: Sync> Stream<T> {
         if let Some(on_data) = &(*context).stream_callbacks.on_data {
             on_data(
                 &(*context).context,
-                bridge_util::envoy_data_as_data(envoy_data),
+                Data::from_envoy_data(envoy_data),
                 end_stream,
             );
         }
@@ -230,7 +227,7 @@ impl<T: Sync> Stream<T> {
         if let Some(on_metadata) = &(*context).stream_callbacks.on_metadata {
             on_metadata(
                 &(*context).context,
-                bridge_util::envoy_headers_as_headers(envoy_metadata),
+                Headers::from_envoy_headers(envoy_metadata),
             );
         }
         context as *mut c_void
@@ -244,7 +241,7 @@ impl<T: Sync> Stream<T> {
         if let Some(on_trailers) = &(*context).stream_callbacks.on_trailers {
             on_trailers(
                 &(*context).context,
-                bridge_util::envoy_headers_as_headers(envoy_trailers),
+                Headers::from_envoy_headers(envoy_trailers),
             );
         }
         context as *mut c_void
@@ -258,7 +255,7 @@ impl<T: Sync> Stream<T> {
         if let Some(on_error) = &(*context).stream_callbacks.on_error {
             on_error(
                 &(*context).context,
-                bridge_util::envoy_error_as_error(envoy_error),
+                HTTPError::from_envoy_error(envoy_error),
             );
         }
         context as *mut c_void
@@ -281,6 +278,8 @@ impl<T: Sync> Stream<T> {
     }
 }
 
+// TODO: if a stream is dropped while a stream is in-flight then you'll segfault because the
+// context will be freed before on_cancel runs
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
         // SAFETY: this is trivially safe, as:
