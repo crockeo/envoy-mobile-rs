@@ -2,7 +2,7 @@ use envoy_mobile_sys;
 
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::bridge_util::{self, Data, HTTPError, Headers};
 use crate::result::{Error, Result};
@@ -104,6 +104,7 @@ struct StreamContextWrapper<T> {
 pub struct Stream<T> {
     context_wrapper_ptr: *mut StreamContextWrapper<T>,
     handle: envoy_mobile_sys::envoy_stream_t,
+    request_sent: Mutex<bool>,
 }
 
 impl<T: Sync> Stream<T> {
@@ -140,6 +141,7 @@ impl<T: Sync> Stream<T> {
         Ok(Self {
             context_wrapper_ptr,
             handle,
+            request_sent: Mutex::new(false),
         })
     }
 
@@ -152,6 +154,7 @@ impl<T: Sync> Stream<T> {
         if status == 1 {
             return Err(Error::FailedToSend("headers"));
         }
+        *self.request_sent.lock().unwrap() = true;
         Ok(self)
     }
 
@@ -286,6 +289,19 @@ impl<T: Sync> Stream<T> {
 
 impl<T> Drop for Stream<T> {
     fn drop(&mut self) {
+        if let Ok(request_sent) = self.request_sent.lock() {
+            if !*request_sent {
+                // SAFETY: We only deallocate the context ptr when there as not been a request
+                // sent. Therefore the context will not be used from another thread.
+                //
+                // If a request has been sent, then the context will be deallocated from inside one
+                // of the terminal callbacks: on_error, on_complete, or on_cancel.
+                unsafe {
+                    let _ = Box::from_raw(self.context_wrapper_ptr);
+                }
+            }
+        }
+
         // SAFETY: this is trivially safe, as:
         //   - if handle is invalid, nothing happens
         //   - if the handle is already reset, nothing happens
