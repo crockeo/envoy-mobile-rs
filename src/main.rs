@@ -2,16 +2,21 @@ mod bridge_util;
 mod engine;
 #[cfg(feature = "use-futures")]
 mod futures;
+mod headers;
 mod log_level;
+mod request_method;
 mod result;
+mod scheme;
 mod stream;
 
 use std::sync::{Arc, Condvar, Mutex};
 
-use bridge_util::Headers;
 use engine::EngineBuilder;
+use headers::RequestHeaders;
 use log_level::LogLevel;
+use request_method::RequestMethod;
 use result::EnvoyResult;
+use scheme::Scheme;
 
 struct NullCtx {
     running: Condvar,
@@ -87,11 +92,12 @@ fn main() -> EnvoyResult<()> {
         .build()?;
 
     stream.send_headers(
-        Headers::new()
-            .add(":method", "GET")
-            .add(":scheme", "https")
-            .add(":authority", "www.delta.com")
-            .add(":path", "/"),
+        RequestHeaders::new()
+            .add_method(RequestMethod::GET)
+            .add_scheme(Scheme::HTTPS)
+            .add_authority("www.delta.com")
+            .add_path("/")
+            .as_headers(),
         true,
     )?;
 
