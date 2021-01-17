@@ -11,7 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use bridge_util::Headers;
 use engine::EngineBuilder;
 use log_level::LogLevel;
-use result::Result;
+use result::EnvoyResult;
 
 struct NullCtx {
     running: Condvar,
@@ -41,7 +41,7 @@ impl StreamContext {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> EnvoyResult<()> {
     let context = Arc::new(NullCtx::default());
 
     let engine = EngineBuilder::<NullCtx>::new(context.clone(), LogLevel::Error)

@@ -3,7 +3,7 @@
 
 use std::marker::PhantomData;
 
-use super::bridge_util::{Data, HTTPError, Headers};
+use crate::bridge_util::{Data, HTTPError, Headers};
 
 // TODO: import these when i'm not in the air & can download from crates.io
 // use futures::{Future, Stream};

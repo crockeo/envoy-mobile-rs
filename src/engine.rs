@@ -3,9 +3,9 @@ use envoy_mobile_sys;
 use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
-use super::log_level::LogLevel;
-use super::result::{Error, Result};
-use super::stream::StreamBuilder;
+use crate::log_level::LogLevel;
+use crate::result::{EnvoyError, EnvoyResult};
+use crate::stream::StreamBuilder;
 
 pub struct EngineCallbacks<T> {
     on_engine_running: Option<fn(&Arc<T>)>,
@@ -54,7 +54,7 @@ impl<T: Default + Sync> EngineBuilder<T> {
         }
     }
 
-    pub fn build(self) -> Result<Engine<T>> {
+    pub fn build(self) -> EnvoyResult<Engine<T>> {
         Engine::new(
             self.build_config(),
             self.log_level,
@@ -105,7 +105,7 @@ impl<T: Default + Sync> EngineBuilder<T> {
 
         // this template doesn't change, and is written in ASCII under:
         // `envoy-mobile/library/common/config_template.cc`
-        // so we never expect to have a Utf8Error
+        // so we never expect to have a Utf8EnvoyError
         let mut config_template = config_template.to_str().unwrap().to_string();
         for (search_str, replacement) in replacements.into_iter() {
             config_template = config_template.replace(search_str, replacement.as_str());
@@ -177,7 +177,7 @@ impl<T: Sync> Engine<T> {
         log_level: LogLevel,
         context: Arc<T>,
         engine_callbacks: EngineCallbacks<T>,
-    ) -> Result<Self> {
+    ) -> EnvoyResult<Self> {
         let context_wrapper = EngineContextWrapper {
             context,
             engine_callbacks,
@@ -191,7 +191,7 @@ impl<T: Sync> Engine<T> {
             handle = envoy_mobile_sys::init_engine();
         }
         if handle == 0 {
-            return Err(Error::InvalidHandle);
+            return Err(EnvoyError::InvalidHandle);
         }
 
         let envoy_engine_callbacks = envoy_mobile_sys::envoy_engine_callbacks {
@@ -218,7 +218,7 @@ impl<T: Sync> Engine<T> {
             );
         }
         if status == 1 {
-            return Err(Error::CouldNotInit);
+            return Err(EnvoyError::CouldNotInit);
         }
 
         Ok(Self {

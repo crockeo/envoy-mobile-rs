@@ -2,11 +2,10 @@ use envoy_mobile_sys;
 
 use std::ffi::c_void;
 use std::ptr;
-use std::str::Utf8Error;
 use std::sync::{Arc, Mutex};
 
 use crate::bridge_util::{Data, HTTPError, Headers};
-use crate::result::{Error, Result};
+use crate::result::{EnvoyError, EnvoyResult};
 
 type OnHeaders<T> = fn(&Arc<T>, Headers, bool);
 type OnData<T> = fn(&Arc<T>, Data, bool);
@@ -55,7 +54,7 @@ impl<T: Sync> StreamBuilder<T> {
         }
     }
 
-    pub fn build(self) -> Result<Stream<T>> {
+    pub fn build(self) -> EnvoyResult<Stream<T>> {
         Stream::new(self.context, self.handle, self.stream_callbacks)
     }
 
@@ -113,7 +112,7 @@ impl<T: Sync> Stream<T> {
         context: Arc<T>,
         handle: envoy_mobile_sys::envoy_stream_t,
         stream_callbacks: StreamCallbacks<T>,
-    ) -> Result<Self> {
+    ) -> EnvoyResult<Self> {
         let context_wrapper = StreamContextWrapper {
             context,
             stream_callbacks,
@@ -136,7 +135,7 @@ impl<T: Sync> Stream<T> {
             status = envoy_mobile_sys::start_stream(handle, envoy_stream_callbacks);
         }
         if status == 1 {
-            return Err(Error::CouldNotInit);
+            return Err(EnvoyError::CouldNotInit);
         }
 
         Ok(Self {
@@ -146,48 +145,48 @@ impl<T: Sync> Stream<T> {
         })
     }
 
-    pub fn send_headers(&mut self, headers: Headers, end_stream: bool) -> Result<&mut Self> {
+    pub fn send_headers(&mut self, headers: Headers, end_stream: bool) -> EnvoyResult<&mut Self> {
         let status;
         unsafe {
             status =
                 envoy_mobile_sys::send_headers(self.handle, headers.as_envoy_headers(), end_stream);
         }
         if status == 1 {
-            return Err(Error::FailedToSend("headers"));
+            return Err(EnvoyError::FailedToSend("headers"));
         }
         *self.request_sent.lock().unwrap() = true;
         Ok(self)
     }
 
-    pub fn send_data(&mut self, data: Data, end_stream: bool) -> Result<&mut Self> {
+    pub fn send_data(&mut self, data: Data, end_stream: bool) -> EnvoyResult<&mut Self> {
         let status;
         unsafe {
             status = envoy_mobile_sys::send_data(self.handle, data.as_envoy_data(), end_stream);
         }
         if status == 1 {
-            return Err(Error::FailedToSend("data"));
+            return Err(EnvoyError::FailedToSend("data"));
         }
         Ok(self)
     }
 
-    pub fn send_metadata(&mut self, metadata: Headers) -> Result<&mut Self> {
+    pub fn send_metadata(&mut self, metadata: Headers) -> EnvoyResult<&mut Self> {
         let status;
         unsafe {
             status = envoy_mobile_sys::send_metadata(self.handle, metadata.as_envoy_headers());
         }
         if status == 1 {
-            return Err(Error::FailedToSend("metadata"));
+            return Err(EnvoyError::FailedToSend("metadata"));
         }
         Ok(self)
     }
 
-    pub fn send_trailers(&mut self, trailers: Headers) -> Result<&mut Self> {
+    pub fn send_trailers(&mut self, trailers: Headers) -> EnvoyResult<&mut Self> {
         let status;
         unsafe {
             status = envoy_mobile_sys::send_trailers(self.handle, trailers.as_envoy_headers());
         }
         if status == 1 {
-            return Err(Error::FailedToSend("trailers"));
+            return Err(EnvoyError::FailedToSend("trailers"));
         }
         Ok(self)
     }

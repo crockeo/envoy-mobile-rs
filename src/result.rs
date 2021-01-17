@@ -1,10 +1,10 @@
 use std::result;
 
 #[derive(Debug)]
-pub enum Error {
+pub enum EnvoyError {
     InvalidHandle,
     CouldNotInit,
     FailedToSend(&'static str),
 }
 
-pub type Result<T> = result::Result<T, Error>;
+pub type EnvoyResult<T> = result::Result<T, EnvoyError>;
