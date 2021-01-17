@@ -57,7 +57,9 @@ fn main() -> Result<()> {
     let mut stream = engine
         .stream_builder(stream_context.clone())
         .set_on_headers(|_, headers, _| {
-            println!("{:?}", headers);
+            for (key, value) in headers.into_iter() {
+                println!("{}: {}", key, value);
+            }
         })
         .set_on_data(|_, data, _| {
             if let Ok(s) = data.as_str() {

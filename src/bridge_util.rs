@@ -92,6 +92,47 @@ impl Headers {
     }
 }
 
+pub struct HeadersIter<'a> {
+    map_iter: std::collections::hash_map::Iter<'a, String, Vec<String>>,
+    key: &'a str,
+    values: std::slice::Iter<'a, String>,
+}
+
+impl<'a> HeadersIter<'a> {
+    fn new(map: &'a HashMap<String, Vec<String>>) -> Self {
+        Self {
+            map_iter: map.into_iter(),
+            key: "",
+            values: [].iter(),
+        }
+    }
+}
+
+impl<'a> Iterator for HeadersIter<'a> {
+    type Item = (&'a str, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(value) = self.values.next() {
+            Some((&self.key, &value))
+        } else if let Some((key, values)) = self.map_iter.next() {
+            self.key = key;
+            self.values = values.into_iter();
+            self.next()
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Headers {
+    type Item = (&'a str, &'a str);
+    type IntoIter = HeadersIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        HeadersIter::new(&self.0)
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Data(Vec<u8>);
 
