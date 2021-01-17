@@ -1,5 +1,7 @@
 mod bridge_util;
 mod engine;
+#[cfg(feature = "use-futures")]
+mod futures;
 mod log_level;
 mod result;
 mod stream;
