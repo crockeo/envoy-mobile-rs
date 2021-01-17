@@ -8,7 +8,7 @@ mod stream;
 
 use std::sync::{Arc, Condvar, Mutex};
 
-use bridge_util::{Data, Headers};
+use bridge_util::Headers;
 use engine::EngineBuilder;
 use log_level::LogLevel;
 use result::Result;
@@ -56,13 +56,19 @@ fn main() -> Result<()> {
     let stream_context = Arc::new(StreamContext::new());
     let mut stream = engine
         .stream_builder(stream_context.clone())
-        .set_on_headers(|_, _, _| {
-            println!("headers");
+        .set_on_headers(|_, headers, _| {
+            println!("{:?}", headers);
         })
         .set_on_data(|_, data, _| {
             if let Ok(s) = data.as_str() {
                 println!("{}", s);
             }
+        })
+        .set_on_metadata(|_, metadata| {
+            println!("metadata: {:?}", metadata);
+        })
+        .set_on_trailers(|_, trailers| {
+            println!("trailers: {:?}", trailers);
         })
         .set_on_error(|context, _| {
             println!("error");
@@ -82,7 +88,7 @@ fn main() -> Result<()> {
         Headers::new()
             .add(":method", "GET")
             .add(":scheme", "https")
-            .add(":authority", "www.google.com")
+            .add(":authority", "www.delta.com")
             .add(":path", "/"),
         true,
     )?;

@@ -8,23 +8,23 @@ use std::slice;
 use std::str::{self, Utf8Error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Headers(HashMap<Data, Vec<Data>>);
+pub struct Headers(HashMap<String, Vec<String>>);
 
 impl Headers {
     pub fn new() -> Self {
         Self(HashMap::new())
     }
 
-    pub fn add<T: AsRef<str>, U: AsRef<str>>(self, key: T, value: U) -> Self {
-        self.add_data(
-            Data::from_bytes(key.as_ref().as_bytes()),
-            Data::from_bytes(value.as_ref().as_bytes()),
-        )
-    }
+    pub fn add<T: AsRef<str>, U: AsRef<str>>(mut self, key: T, value: U) -> Self {
+        let key = key.as_ref().to_string();
+        let value = value.as_ref().to_string();
 
-    pub fn add_data(mut self, key: Data, value: Data) -> Self {
         self.0.entry(key).or_insert_with(|| Vec::new()).push(value);
         self
+    }
+
+    pub fn add_data(self, key: Data, value: Data) -> Result<Self, Utf8Error> {
+        Ok(self.add(key.as_str()?, value.as_str()?))
     }
 
     pub fn from_envoy_headers(envoy_headers: envoy_mobile_sys::envoy_headers) -> Self {
@@ -34,18 +34,26 @@ impl Headers {
                 slice::from_raw_parts(envoy_headers.headers, envoy_headers.length as usize);
         }
 
-        let mut headers = HashMap::new();
+        let mut headers = Headers(HashMap::new());
         for envoy_header in envoy_headers_slice {
-            let key = Data::from_envoy_data(envoy_header.key);
-            let value = Data::from_envoy_data(envoy_header.value);
-            headers.entry(key).or_insert_with(|| Vec::new()).push(value);
+            // TODO: take the time to bubble this error up nicely; i don't know how much we can
+            // trust envoy-mobile to do UTF8 validation
+            headers = headers
+                .add_data(
+                    Data::from_envoy_data(envoy_header.key),
+                    Data::from_envoy_data(envoy_header.value),
+                )
+                .unwrap();
         }
 
         unsafe {
+            // normally one might use envoy_mobile_sys::release_envoy_headers, but we already
+            // release each of the envoy_data entries while iterating through, so we want to avoid
+            // a double free
             libc::free(envoy_headers.headers as *mut c_void);
         }
 
-        Headers(headers)
+        headers
     }
 
     pub fn as_envoy_headers(self) -> envoy_mobile_sys::envoy_headers {
@@ -70,8 +78,8 @@ impl Headers {
         for (key, values) in self.0.into_iter() {
             for value in values.into_iter() {
                 headers[i] = envoy_mobile_sys::envoy_header {
-                    key: key.clone().as_envoy_data(),
-                    value: value.as_envoy_data(),
+                    key: Data::from_bytes(key.clone()).as_envoy_data(),
+                    value: Data::from_bytes(value).as_envoy_data(),
                 };
                 i += 1;
             }

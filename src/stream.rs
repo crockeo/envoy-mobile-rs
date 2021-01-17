@@ -2,9 +2,10 @@ use envoy_mobile_sys;
 
 use std::ffi::c_void;
 use std::ptr;
+use std::str::Utf8Error;
 use std::sync::{Arc, Mutex};
 
-use crate::bridge_util::{self, Data, HTTPError, Headers};
+use crate::bridge_util::{Data, HTTPError, Headers};
 use crate::result::{Error, Result};
 
 type OnHeaders<T> = fn(&Arc<T>, Headers, bool);
