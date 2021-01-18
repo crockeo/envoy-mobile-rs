@@ -1,6 +1,5 @@
 mod bridge_util;
 mod engine;
-#[cfg(feature = "use-futures")]
 mod futures;
 mod headers;
 mod log_level;
@@ -8,6 +7,8 @@ mod request_method;
 mod result;
 mod scheme;
 mod stream;
+
+use tokio;
 
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -17,20 +18,6 @@ use log_level::LogLevel;
 use request_method::RequestMethod;
 use result::EnvoyResult;
 use scheme::Scheme;
-
-struct NullCtx {
-    running: Condvar,
-    running_lock: Mutex<()>,
-}
-
-impl Default for NullCtx {
-    fn default() -> Self {
-        Self {
-            running: Condvar::new(),
-            running_lock: Mutex::new(()),
-        }
-    }
-}
 
 struct StreamContext {
     complete: Mutex<bool>,
@@ -46,17 +33,10 @@ impl StreamContext {
     }
 }
 
-fn main() -> EnvoyResult<()> {
-    let context = Arc::new(NullCtx::default());
-
-    let engine = EngineBuilder::<NullCtx>::new(context.clone(), LogLevel::Error)
-        .add_on_engine_running(|context| context.running.notify_one())
-        .build()?;
-
-    {
-        let running_lock = context.running_lock.lock().unwrap();
-        let _ = context.running.wait(running_lock).unwrap();
-    }
+#[tokio::main]
+async fn main() -> EnvoyResult<()> {
+    let engine = EngineBuilder::new(LogLevel::Error).build()?;
+    engine.on_engine_running().await;
 
     let stream_context = Arc::new(StreamContext::new());
     let mut stream = engine

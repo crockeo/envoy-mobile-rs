@@ -10,9 +10,12 @@ repository = "https://github.com/crockeo/envoy-mobile-rs"
 
 [dependencies]
 envoy-mobile-sys = { path = "../envoy-mobile-sys", version = "0.1.2" }
-# TODO: enable when i'm on the ground
-# futures = "0.3.9"
 libc = "0.2.82"
+
+[dependencies.tokio]
+version = "1.0.2"
+default-features = true
+features = ["macros", "rt-multi-thread"]
 
 [features]
 default = ["use-futures"]

@@ -3,26 +3,12 @@ use envoy_mobile_sys;
 use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
+use crate::futures::CallbackFuture;
 use crate::log_level::LogLevel;
 use crate::result::{EnvoyError, EnvoyResult};
 use crate::stream::StreamBuilder;
 
-pub struct EngineCallbacks<T> {
-    on_engine_running: Option<fn(&Arc<T>)>,
-    on_exit: Option<fn(&Arc<T>)>,
-}
-
-impl<T> EngineCallbacks<T> {
-    fn new() -> Self {
-        Self {
-            on_engine_running: None,
-            on_exit: None,
-        }
-    }
-}
-
-pub struct EngineBuilder<T> {
-    context: Arc<T>,
+pub struct EngineBuilder {
     log_level: LogLevel,
     stats_domain: String,
     connect_timeout_seconds: u64,
@@ -33,13 +19,11 @@ pub struct EngineBuilder<T> {
     app_version: String,
     app_id: String,
     virtual_clusters: String,
-    engine_callbacks: EngineCallbacks<T>,
 }
 
-impl<T: Default + Sync> EngineBuilder<T> {
-    pub fn new(context: Arc<T>, log_level: LogLevel) -> Self {
+impl EngineBuilder {
+    pub fn new(log_level: LogLevel) -> Self {
         Self {
-            context,
             log_level,
             stats_domain: "0.0.0.0".to_string(),
             connect_timeout_seconds: 30,
@@ -50,17 +34,11 @@ impl<T: Default + Sync> EngineBuilder<T> {
             app_version: "unspecified".to_string(),
             app_id: "unspecified".to_string(),
             virtual_clusters: "[]".to_string(),
-            engine_callbacks: EngineCallbacks::new(),
         }
     }
 
-    pub fn build(self) -> EnvoyResult<Engine<T>> {
-        Engine::new(
-            self.build_config(),
-            self.log_level,
-            self.context,
-            self.engine_callbacks,
-        )
+    pub fn build(self) -> EnvoyResult<Engine> {
+        Engine::new(self.build_config(), self.log_level)
     }
 
     fn build_config(&self) -> String {
@@ -149,40 +127,25 @@ impl<T: Default + Sync> EngineBuilder<T> {
         self.virtual_clusters = virutal_clusters.to_owned();
         self
     }
-
-    pub fn add_on_engine_running(mut self, on_engine_running: fn(&Arc<T>)) -> Self {
-        self.engine_callbacks.on_engine_running = Some(on_engine_running);
-        self
-    }
-
-    pub fn add_on_exit(mut self, on_exit: fn(&Arc<T>)) -> Self {
-        self.engine_callbacks.on_exit = Some(on_exit);
-        self
-    }
 }
 
-struct EngineContextWrapper<T> {
-    context: Arc<T>,
-    engine_callbacks: EngineCallbacks<T>,
+struct EngineContext {
+    on_engine_running: CallbackFuture<()>,
+    on_exit: CallbackFuture<()>,
 }
 
-pub struct Engine<T> {
-    context_wrapper_ptr: *mut EngineContextWrapper<T>,
+pub struct Engine {
+    context_ptr: *mut EngineContext,
     handle: envoy_mobile_sys::envoy_engine_t,
 }
 
-impl<T: Sync> Engine<T> {
-    fn new(
-        config: String,
-        log_level: LogLevel,
-        context: Arc<T>,
-        engine_callbacks: EngineCallbacks<T>,
-    ) -> EnvoyResult<Self> {
-        let context_wrapper = EngineContextWrapper {
-            context,
-            engine_callbacks,
+impl Engine {
+    fn new(config: String, log_level: LogLevel) -> EnvoyResult<Self> {
+        let context = EngineContext {
+            on_engine_running: CallbackFuture::new(),
+            on_exit: CallbackFuture::new(),
         };
-        let context_wrapper_ptr = Box::into_raw(Box::new(context_wrapper));
+        let context_ptr = Box::into_raw(Box::new(context));
 
         // SAFETY: This is trivially correct, so long as we trust envoy-mobile. Generally speaking,
         // init_engine is nothing to worry about. Pay more attention to the call to run_engine.
@@ -195,9 +158,9 @@ impl<T: Sync> Engine<T> {
         }
 
         let envoy_engine_callbacks = envoy_mobile_sys::envoy_engine_callbacks {
-            on_engine_running: Some(Engine::<T>::dispatch_on_engine_running),
-            on_exit: Some(Engine::<T>::dispatch_on_exit),
-            context: context_wrapper_ptr as *mut c_void,
+            on_engine_running: Some(Engine::dispatch_on_engine_running),
+            on_exit: Some(Engine::dispatch_on_exit),
+            context: context_ptr as *mut c_void,
         };
         let config_c_str = CString::new(config).unwrap();
         let log_level_c_str = CString::new(log_level.to_string()).unwrap();
@@ -222,9 +185,17 @@ impl<T: Sync> Engine<T> {
         }
 
         Ok(Self {
-            context_wrapper_ptr,
+            context_ptr,
             handle,
         })
+    }
+
+    pub fn on_engine_running(&self) -> &CallbackFuture<()> {
+        unsafe { &(*self.context_ptr).on_engine_running }
+    }
+
+    pub fn on_exit(&self) -> &CallbackFuture<()> {
+        unsafe { &(*self.context_ptr).on_exit }
     }
 
     pub fn stream_builder<U: Sync>(&self, context: Arc<U>) -> StreamBuilder<U> {
@@ -243,24 +214,20 @@ impl<T: Sync> Engine<T> {
     }
 
     unsafe extern "C" fn dispatch_on_engine_running(context: *mut c_void) {
-        let context = context as *const EngineContextWrapper<T>;
-        if let Some(on_engine_running) = &(*context).engine_callbacks.on_engine_running {
-            on_engine_running(&(*context).context);
-        }
+        let context = context as *const EngineContext;
+        (*context).on_engine_running.put(());
     }
 
     unsafe extern "C" fn dispatch_on_exit(context: *mut c_void) {
-        let context = context as *const EngineContextWrapper<T>;
-        if let Some(on_exit) = &(*context).engine_callbacks.on_exit {
-            on_exit(&(*context).context);
-        }
+        let context = context as *const EngineContext;
+        (*context).on_exit.put(());
     }
 }
 
-impl<T> Drop for Engine<T> {
+impl Drop for Engine {
     fn drop(&mut self) {
         unsafe {
-            let _ = Box::from_raw(self.context_wrapper_ptr);
+            let _ = Box::from_raw(self.context_ptr);
         }
     }
 }
