@@ -39,8 +39,8 @@ impl Headers {
         let mut headers = Headers(HashMap::new());
         for envoy_header in envoy_headers_slice {
             headers = headers.add_data(
-                Data::from_envoy_data(envoy_header.key),
-                Data::from_envoy_data(envoy_header.value),
+                Data::from_envoy_data(envoy_header.key)?,
+                Data::from_envoy_data(envoy_header.value)?,
             )?;
         }
 
@@ -142,7 +142,7 @@ impl Data {
         Data(vec)
     }
 
-    pub fn from_envoy_data(envoy_data: envoy_mobile_sys::envoy_data) -> Self {
+    pub fn from_envoy_data(envoy_data: envoy_mobile_sys::envoy_data) -> EnvoyResult<Self> {
         let mut vec = vec![0; envoy_data.length as usize];
         unsafe {
             ptr::copy(
@@ -154,7 +154,7 @@ impl Data {
                 release(envoy_data.context);
             }
         }
-        Self(vec)
+        Ok(Self(vec))
     }
 
     pub fn as_envoy_data(self) -> envoy_mobile_sys::envoy_data {
@@ -218,7 +218,7 @@ impl HTTPError {
         Ok(HTTPError {
             error_code: HTTPErrorCode::from_envoy_error_code(envoy_error.error_code)
                 .expect("invalid http error code received from envoy-mobile"),
-            message: Data::from_envoy_data(envoy_error.message)
+            message: Data::from_envoy_data(envoy_error.message)?
                 .as_str()?
                 .to_string(),
             attempt_count: envoy_error.attempt_count,
@@ -241,7 +241,7 @@ mod tests {
         let envoy_headers = original_headers.clone().as_envoy_headers();
         let headers = Headers::from_envoy_headers(envoy_headers);
 
-        assert_eq!(original_headers, headers,);
+        assert_eq!(original_headers, headers);
     }
 
     #[test]

@@ -59,6 +59,14 @@ impl<T> CallbackFuture<T> {
     }
 }
 
+impl<T> CallbackFuture<EnvoyResult<T>> {
+    pub fn put_and_report(&self, new_value: EnvoyResult<T>) {
+        if let Err(e) = self.put(new_value) {
+            self.put(Err(e)).expect("put_and_report failed to report");
+        }
+    }
+}
+
 impl<T> Future for CallbackFuture<T> {
     type Output = T;
 
@@ -150,6 +158,21 @@ impl<T> CallbackStream<T> {
             state.index += 1;
             let value = mem::replace(state.values.get_mut(index).unwrap(), None).unwrap();
             Poll::Ready(Some(value))
+        }
+    }
+}
+
+impl<T> CallbackStream<EnvoyResult<T>> {
+    pub fn put_and_report(&self, value: EnvoyResult<T>) {
+        if let Err(e) = self.put(value) {
+            self.put(Err(e))
+                .expect("failed to report in CallbackStream::put_and_report");
+        }
+    }
+    pub fn close_and_report(&self) {
+        if let Err(e) = self.close() {
+            self.put(Err(e))
+                .expect("failed to report in CallbackStream::close_and_report");
         }
     }
 }

@@ -38,13 +38,13 @@ async fn main() -> EnvoyResult<()> {
     )?;
 
     while let Some(headers) = stream.on_headers().next().await {
-        for (key, value) in headers.into_iter() {
+        for (key, value) in headers?.into_iter() {
             println!("{}: {}", key, value);
         }
     }
 
     while let Some(data) = stream.on_data().next().await {
-        if let Ok(s) = data.as_str() {
+        if let Ok(s) = data?.as_str() {
             println!("{}", s);
         }
     }
@@ -53,10 +53,10 @@ async fn main() -> EnvoyResult<()> {
         _ = stream.on_error() => {
             println!("error");
         },
-        () = stream.on_complete() => {
+        _ = stream.on_complete() => {
             println!("complete");
         },
-        () = stream.on_cancel() => {
+        _ = stream.on_cancel() => {
             println!("cancel");
         },
     }

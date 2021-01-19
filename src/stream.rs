@@ -10,15 +10,15 @@ use crate::result::{EnvoyError, EnvoyResult};
 
 struct StreamContext {
     // non-terminal callbacks
-    on_headers: CallbackStream<Headers>,
-    on_data: CallbackStream<Data>,
-    on_metadata: CallbackFuture<Headers>,
-    on_trailers: CallbackFuture<Headers>,
+    on_headers: CallbackStream<EnvoyResult<Headers>>,
+    on_data: CallbackStream<EnvoyResult<Data>>,
+    on_metadata: CallbackFuture<EnvoyResult<Headers>>,
+    on_trailers: CallbackFuture<EnvoyResult<Headers>>,
 
     // terminal callbacks
-    on_error: CallbackFuture<HTTPError>,
-    on_complete: CallbackFuture<()>,
-    on_cancel: CallbackFuture<()>,
+    on_error: CallbackFuture<EnvoyResult<HTTPError>>,
+    on_complete: CallbackFuture<EnvoyResult<()>>,
+    on_cancel: CallbackFuture<EnvoyResult<()>>,
 }
 
 // TODO: restructure this API so that only valid actions can be taken on a Stream; e.g. once you've
@@ -115,46 +115,44 @@ impl Stream {
         Ok(self)
     }
 
-    pub fn on_headers(&self) -> &CallbackStream<Headers> {
+    pub fn on_headers(&self) -> &CallbackStream<EnvoyResult<Headers>> {
         unsafe { &(*self.context_ptr).on_headers }
     }
 
-    pub fn on_data(&self) -> &CallbackStream<Data> {
+    pub fn on_data(&self) -> &CallbackStream<EnvoyResult<Data>> {
         unsafe { &(*self.context_ptr).on_data }
     }
 
-    pub fn on_metadata(&self) -> &CallbackFuture<Headers> {
+    pub fn on_metadata(&self) -> &CallbackFuture<EnvoyResult<Headers>> {
         unsafe { &(*self.context_ptr).on_metadata }
     }
 
-    pub fn on_trailers(&self) -> &CallbackFuture<Headers> {
+    pub fn on_trailers(&self) -> &CallbackFuture<EnvoyResult<Headers>> {
         unsafe { &(*self.context_ptr).on_trailers }
     }
 
-    pub fn on_error(&self) -> &CallbackFuture<HTTPError> {
+    pub fn on_error(&self) -> &CallbackFuture<EnvoyResult<HTTPError>> {
         unsafe { &(*self.context_ptr).on_error }
     }
 
-    pub fn on_complete(&self) -> &CallbackFuture<()> {
+    pub fn on_complete(&self) -> &CallbackFuture<EnvoyResult<()>> {
         unsafe { &(*self.context_ptr).on_complete }
     }
 
-    pub fn on_cancel(&self) -> &CallbackFuture<()> {
+    pub fn on_cancel(&self) -> &CallbackFuture<EnvoyResult<()>> {
         unsafe { &(*self.context_ptr).on_cancel }
     }
 
-    // TODO: in all of these, try to handle the result somehow
     unsafe extern "C" fn dispatch_on_headers(
         envoy_headers: envoy_mobile_sys::envoy_headers,
         end_stream: bool,
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *const StreamContext;
-        let _ = (*context)
-            .on_headers
-            .put(Headers::from_envoy_headers(envoy_headers).unwrap());
+        let on_headers = &(*context).on_headers;
+        on_headers.put_and_report(Headers::from_envoy_headers(envoy_headers));
         if end_stream {
-            let _ = (*context).on_headers.close();
+            on_headers.close_and_report();
         }
         ptr::null_mut::<c_void>()
     }
@@ -166,10 +164,10 @@ impl Stream {
     ) -> *mut c_void {
         let context = context as *const StreamContext;
         (*context).on_headers.maybe_close();
-        let _ = (*context).on_data.put(Data::from_envoy_data(envoy_data));
+        let on_data = &(*context).on_data;
+        on_data.put_and_report(Data::from_envoy_data(envoy_data));
         if end_stream {
-            (*context).on_data.maybe_close();
-            let _ = (*context).on_data.close();
+            on_data.close_and_report();
         }
         ptr::null_mut::<c_void>()
     }
@@ -178,10 +176,9 @@ impl Stream {
         envoy_metadata: envoy_mobile_sys::envoy_headers,
         context: *mut c_void,
     ) -> *mut c_void {
-        let context = context as *const StreamContext;
-        let _ = (*context)
-            .on_metadata
-            .put(Headers::from_envoy_headers(envoy_metadata).unwrap());
+        let context = context as *mut StreamContext;
+        let on_metadata = &(*context).on_metadata;
+        on_metadata.put_and_report(Headers::from_envoy_headers(envoy_metadata));
         ptr::null_mut::<c_void>()
     }
 
@@ -189,10 +186,9 @@ impl Stream {
         envoy_trailers: envoy_mobile_sys::envoy_headers,
         context: *mut c_void,
     ) -> *mut c_void {
-        let context = context as *const StreamContext;
-        let _ = (*context)
-            .on_trailers
-            .put(Headers::from_envoy_headers(envoy_trailers).unwrap());
+        let context = context as *mut StreamContext;
+        let on_trailers = &(*context).on_trailers;
+        on_trailers.put_and_report(Headers::from_envoy_headers(envoy_trailers));
         ptr::null_mut::<c_void>()
     }
 
@@ -201,24 +197,22 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *mut StreamContext;
-        let _ = (*context)
-            .on_error
-            .put(HTTPError::from_envoy_error(envoy_error).unwrap());
-        let _ = Box::from_raw(context);
+        let on_error = &(*context).on_error;
+        on_error.put_and_report(HTTPError::from_envoy_error(envoy_error));
         ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn dispatch_on_complete(context: *mut c_void) -> *mut c_void {
         let context = context as *mut StreamContext;
-        let _ = (*context).on_complete.put(());
-        let _ = Box::from_raw(context);
+        let on_complete = &(*context).on_complete;
+        on_complete.put_and_report(Ok(()));
         ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn dispatch_on_cancel(context: *mut c_void) -> *mut c_void {
         let context = context as *mut StreamContext;
-        let _ = (*context).on_cancel.put(());
-        let _ = Box::from_raw(context);
+        let on_cancel = &(*context).on_cancel;
+        on_cancel.put_and_report(Ok(()));
         ptr::null_mut::<c_void>()
     }
 }
