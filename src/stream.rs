@@ -196,8 +196,6 @@ impl Stream {
         ptr::null_mut::<c_void>()
     }
 
-    // TODO: try to elicit an error where none of these are called and we leak the context. i'm
-    // not sure if it's possible but i want to try
     unsafe extern "C" fn dispatch_on_error(
         envoy_error: envoy_mobile_sys::envoy_error,
         context: *mut c_void,
