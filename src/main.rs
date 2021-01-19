@@ -1,6 +1,6 @@
 mod bridge_util;
+mod callback_futures;
 mod engine;
-mod futures;
 mod headers;
 mod log_level;
 mod request_method;
@@ -8,9 +8,8 @@ mod result;
 mod scheme;
 mod stream;
 
+use futures::{future::FutureExt, select};
 use tokio;
-
-use std::sync::{Arc, Condvar, Mutex};
 
 use engine::EngineBuilder;
 use headers::RequestHeaders;
@@ -19,57 +18,12 @@ use request_method::RequestMethod;
 use result::EnvoyResult;
 use scheme::Scheme;
 
-struct StreamContext {
-    complete: Mutex<bool>,
-    complete_cond: Condvar,
-}
-
-impl StreamContext {
-    fn new() -> Self {
-        Self {
-            complete: Mutex::new(false),
-            complete_cond: Condvar::new(),
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> EnvoyResult<()> {
     let engine = EngineBuilder::new(LogLevel::Error).build()?;
     engine.on_engine_running().await;
 
-    let stream_context = Arc::new(StreamContext::new());
-    let mut stream = engine
-        .stream_builder(stream_context.clone())
-        .set_on_headers(|_, headers, _| {
-            for (key, value) in headers.into_iter() {
-                println!("{}: {}", key, value);
-            }
-        })
-        .set_on_data(|_, data, _| {
-            if let Ok(s) = data.as_str() {
-                println!("{}", s);
-            }
-        })
-        .set_on_metadata(|_, metadata| {
-            println!("metadata: {:?}", metadata);
-        })
-        .set_on_trailers(|_, trailers| {
-            println!("trailers: {:?}", trailers);
-        })
-        .set_on_error(|context, _| {
-            println!("error");
-            set_complete(context);
-        })
-        .set_on_complete(|context| {
-            println!("complete");
-            set_complete(context);
-        })
-        .set_on_cancel(|context| {
-            println!("cancel");
-            set_complete(context);
-        })
-        .build()?;
+    let mut stream = engine.stream()?;
 
     stream.send_headers(
         RequestHeaders::new()
@@ -81,18 +35,32 @@ async fn main() -> EnvoyResult<()> {
         true,
     )?;
 
-    {
-        let complete = stream_context.complete.lock().unwrap();
-        let _ = stream_context.complete_cond.wait(complete);
-    }
+    // TODO: do this after implementing Iterator on both of these
+    // for headers in stream.on_headers() {
+    //     let headers = headers.await;
+    //     for (key, value) in headers.into_iter() {
+    //         println!("{}: {}", key, value);
+    //     }
+    // }
+
+    // for data in stream.on_data() {
+    //     let data = data.await;
+    //     if let Ok(s) = data.as_str() {
+    //         println!("{}", s);
+    //     }
+    // }
+
+    // TODO: do this after implementing:
+    //   - FutureExt
+    //   - Iterator
+    //   - futures::Future
+    // select! {
+    //     (_) = stream.on_error().fuse() => {},
+    //     () = stream.on_complete().fuse() => {},
+    //     () = stream.on_cancel().fuse() => {},
+    // }
 
     engine.terminate();
 
     Ok(())
-}
-
-fn set_complete(context: &Arc<StreamContext>) {
-    let mut complete = context.complete.lock().unwrap();
-    *complete = true;
-    context.complete_cond.notify_one();
 }

@@ -3,10 +3,10 @@ use envoy_mobile_sys;
 use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
-use crate::futures::CallbackFuture;
+use crate::callback_futures::CallbackFuture;
 use crate::log_level::LogLevel;
 use crate::result::{EnvoyError, EnvoyResult};
-use crate::stream::StreamBuilder;
+use crate::stream::Stream;
 
 pub struct EngineBuilder {
     log_level: LogLevel,
@@ -198,13 +198,13 @@ impl Engine {
         unsafe { &(*self.context_ptr).on_exit }
     }
 
-    pub fn stream_builder<U: Sync>(&self, context: Arc<U>) -> StreamBuilder<U> {
+    pub fn stream(&self) -> EnvoyResult<Stream> {
         // SAFETY: this is trivially safe; guaranteed not to fail.
         let stream_handle;
         unsafe {
             stream_handle = envoy_mobile_sys::init_stream(self.handle);
         }
-        StreamBuilder::new(context, stream_handle)
+        Stream::new(stream_handle)
     }
 
     pub fn terminate(self) {
