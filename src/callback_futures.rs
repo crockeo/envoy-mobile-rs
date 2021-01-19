@@ -1,5 +1,6 @@
-use futures::future::{FusedFuture, Future};
+use futures::future::FusedFuture;
 use futures::task::{Context, Poll, Waker};
+use futures::{Future, Stream};
 
 use std::mem;
 use std::pin::Pin;
@@ -87,85 +88,84 @@ impl<T> FusedFuture for &CallbackFuture<T> {
 }
 
 struct CallbackStreamState<T> {
-    values: Vec<T>,
-    index: usize,
+    values: Vec<Option<T>>,
     closed: bool,
+    index: usize,
     waker: Option<Waker>,
 }
 
-impl<T> CallbackStreamState<T> {
-    fn new() -> Self {
-        Self {
-            values: Vec::new(),
-            index: 0,
-            closed: false,
-            waker: None,
-        }
-    }
-}
-
 pub struct CallbackStream<T> {
-    state: Arc<Mutex<CallbackStreamState<T>>>,
+    state: Mutex<CallbackStreamState<T>>,
 }
 
 impl<T> CallbackStream<T> {
     pub fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(CallbackStreamState::new())),
+            state: Mutex::new(CallbackStreamState {
+                values: Vec::new(),
+                closed: false,
+                index: 0,
+                waker: None,
+            }),
         }
     }
 
-    pub fn put(&self, new_value: T) -> EnvoyResult<()> {
+    pub fn put(&self, value: T) -> EnvoyResult<()> {
         let mut state = self.state.lock().unwrap();
         if state.closed {
-            Err(EnvoyError::AlreadyClosed)
-        } else {
-            state.values.push(new_value);
-            Ok(())
+            return Err(EnvoyError::AlreadyClosed);
         }
+        state.values.push(Some(value));
+        if let Some(waker) = &state.waker {
+            waker.wake_by_ref();
+        }
+        Ok(())
     }
 
     pub fn close(&self) -> EnvoyResult<()> {
         let mut state = self.state.lock().unwrap();
         if state.closed {
-            Err(EnvoyError::AlreadyClosed)
-        } else {
-            state.closed = true;
-            Ok(())
+            return Err(EnvoyError::AlreadyClosed);
         }
+        state.closed = true;
+        Ok(())
     }
-}
 
-impl<T> Future for CallbackStream<T> {
-    type Output = CallbackStreamResult<T>;
-
-    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        // TODO: try to come up with a way to fan out pieces of the future as they become
-        // available, instead of only handing the whole thing out when it's done
+    pub fn maybe_close(&self) {
         let mut state = self.state.lock().unwrap();
-        if state.closed {
-            Poll::Ready(CallbackStreamResult::new(self.state.clone()))
+        state.closed = true;
+    }
+
+    fn poll_next_impl(&self, ctx: &mut Context<'_>) -> Poll<Option<T>> {
+        let mut state = self.state.lock().unwrap();
+        if state.index >= state.values.len() {
+            if state.closed {
+                Poll::Ready(None)
+            } else {
+                state.waker = Some(ctx.waker().clone());
+                Poll::Pending
+            }
         } else {
-            state.waker = Some(ctx.waker().clone());
-            Poll::Pending
+            let index = state.index;
+            state.index += 1;
+            let value = mem::replace(state.values.get_mut(index).unwrap(), None).unwrap();
+            Poll::Ready(Some(value))
         }
     }
 }
 
-pub struct CallbackStreamResult<T> {
-    state: Arc<Mutex<CallbackStreamState<T>>>,
-}
-
-impl<T> CallbackStreamResult<T> {
-    fn new(state: Arc<Mutex<CallbackStreamState<T>>>) -> Self {
-        Self { state }
-    }
-}
-
-impl<T> Iterator for CallbackStreamResult<T> {
+impl<T> Stream for CallbackStream<T> {
     type Item = T;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+    fn poll_next(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_next_impl(ctx)
+    }
+}
+
+impl<T> Stream for &CallbackStream<T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_next_impl(ctx)
     }
 }

@@ -165,8 +165,10 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *const StreamContext;
+        (*context).on_headers.maybe_close();
         let _ = (*context).on_data.put(Data::from_envoy_data(envoy_data));
         if end_stream {
+            (*context).on_data.maybe_close();
             let _ = (*context).on_data.close();
         }
         ptr::null_mut::<c_void>()

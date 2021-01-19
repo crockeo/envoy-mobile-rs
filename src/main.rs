@@ -10,7 +10,7 @@ mod result;
 mod scheme;
 mod stream;
 
-use futures::select;
+use futures::{select, StreamExt};
 use tokio;
 
 use engine::EngineBuilder;
@@ -37,20 +37,17 @@ async fn main() -> EnvoyResult<()> {
         true,
     )?;
 
-    // TODO: do this after implementing Iterator on both of these
-    // for headers in stream.on_headers() {
-    //     let headers = headers.await;
-    //     for (key, value) in headers.into_iter() {
-    //         println!("{}: {}", key, value);
-    //     }
-    // }
+    while let Some(headers) = stream.on_headers().next().await {
+        for (key, value) in headers.into_iter() {
+            println!("{}: {}", key, value);
+        }
+    }
 
-    // for data in stream.on_data() {
-    //     let data = data.await;
-    //     if let Ok(s) = data.as_str() {
-    //         println!("{}", s);
-    //     }
-    // }
+    while let Some(data) = stream.on_data().next().await {
+        if let Ok(s) = data.as_str() {
+            println!("{}", s);
+        }
+    }
 
     select! {
         _ = stream.on_error() => {
