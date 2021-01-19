@@ -1,7 +1,6 @@
 use envoy_mobile_sys;
 
 use std::ffi::{c_void, CStr, CString};
-use std::sync::Arc;
 
 use crate::callback_futures::CallbackFuture;
 use crate::log_level::LogLevel;
@@ -215,12 +214,12 @@ impl Engine {
 
     unsafe extern "C" fn dispatch_on_engine_running(context: *mut c_void) {
         let context = context as *const EngineContext;
-        (*context).on_engine_running.put(());
+        let _ = (*context).on_engine_running.put(());
     }
 
     unsafe extern "C" fn dispatch_on_exit(context: *mut c_void) {
         let context = context as *const EngineContext;
-        (*context).on_exit.put(());
+        let _ = (*context).on_exit.put(());
     }
 }
 

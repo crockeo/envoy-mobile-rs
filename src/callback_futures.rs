@@ -1,8 +1,8 @@
 use futures::future::Future;
+use futures::task::{Context, Poll, Waker};
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
 
 use crate::result::{EnvoyError, EnvoyResult};
 

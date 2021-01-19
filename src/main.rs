@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod bridge_util;
 mod callback_futures;
 mod engine;
@@ -8,7 +10,6 @@ mod result;
 mod scheme;
 mod stream;
 
-use futures::{future::FutureExt, select};
 use tokio;
 
 use engine::EngineBuilder;

@@ -182,7 +182,7 @@ impl Data {
 pub struct HTTPError {}
 
 impl HTTPError {
-    pub fn from_envoy_error(envoy_error: envoy_mobile_sys::envoy_error) -> Self {
+    pub fn from_envoy_error(_envoy_error: envoy_mobile_sys::envoy_error) -> Self {
         todo!()
     }
 }

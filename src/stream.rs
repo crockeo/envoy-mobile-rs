@@ -143,17 +143,18 @@ impl Stream {
         unsafe { &(*self.context_ptr).on_cancel }
     }
 
+    // TODO: in all of these, try to handle the result somehow
     unsafe extern "C" fn dispatch_on_headers(
         envoy_headers: envoy_mobile_sys::envoy_headers,
         end_stream: bool,
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *const StreamContext;
-        (*context)
+        let _ = (*context)
             .on_headers
             .put(Headers::from_envoy_headers(envoy_headers));
         if end_stream {
-            (*context).on_headers.close();
+            let _ = (*context).on_headers.close();
         }
         ptr::null_mut::<c_void>()
     }
@@ -164,9 +165,9 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *const StreamContext;
-        (*context).on_data.put(Data::from_envoy_data(envoy_data));
+        let _ = (*context).on_data.put(Data::from_envoy_data(envoy_data));
         if end_stream {
-            (*context).on_data.close();
+            let _ = (*context).on_data.close();
         }
         ptr::null_mut::<c_void>()
     }
@@ -176,7 +177,7 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *const StreamContext;
-        (*context)
+        let _ = (*context)
             .on_metadata
             .put(Headers::from_envoy_headers(envoy_metadata));
         ptr::null_mut::<c_void>()
@@ -187,7 +188,7 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *const StreamContext;
-        (*context)
+        let _ = (*context)
             .on_trailers
             .put(Headers::from_envoy_headers(envoy_trailers));
         ptr::null_mut::<c_void>()
@@ -200,7 +201,7 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *mut StreamContext;
-        (*context)
+        let _ = (*context)
             .on_error
             .put(HTTPError::from_envoy_error(envoy_error));
         let _ = Box::from_raw(context);
@@ -209,14 +210,14 @@ impl Stream {
 
     unsafe extern "C" fn dispatch_on_complete(context: *mut c_void) -> *mut c_void {
         let context = context as *mut StreamContext;
-        (*context).on_complete.put(());
+        let _ = (*context).on_complete.put(());
         let _ = Box::from_raw(context);
         ptr::null_mut::<c_void>()
     }
 
     unsafe extern "C" fn dispatch_on_cancel(context: *mut c_void) -> *mut c_void {
         let context = context as *mut StreamContext;
-        (*context).on_cancel.put(());
+        let _ = (*context).on_cancel.put(());
         let _ = Box::from_raw(context);
         ptr::null_mut::<c_void>()
     }

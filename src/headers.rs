@@ -5,7 +5,7 @@ use crate::bridge_util::Headers;
 use crate::request_method::RequestMethod;
 use crate::scheme::Scheme;
 
-enum HeadersError {
+pub enum HeadersError {
     ReservedKey,
 }
 
