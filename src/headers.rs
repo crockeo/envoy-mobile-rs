@@ -1,6 +1,8 @@
 //! Provides structured wrappers around the low-level [Headers] type. This module allows users to
 //! avoid populating & parsing reserved header keys.
 
+use lazy_static::lazy_static;
+
 use crate::bridge_util::Headers;
 use crate::request_method::RequestMethod;
 use crate::scheme::Scheme;
@@ -49,12 +51,13 @@ impl RequestHeaders {
 }
 
 fn is_key_reserved<T: AsRef<str>>(key: T) -> bool {
-    // TODO: download and use lazy_static!
-    // TODO: populate more reserved keywords
+    lazy_static! {
+        static ref RESERVED_KEYS: Vec<&'static str> =
+            vec![":method", ":scheme", ":authority", ":path"];
+    }
     let key = key.as_ref();
-    let reserved_keys = vec![":method", ":scheme", ":authority", ":path"];
-    for reserved_key in reserved_keys.into_iter() {
-        if key == reserved_key {
+    for reserved_key in RESERVED_KEYS.iter() {
+        if key == *reserved_key {
             return true;
         }
     }

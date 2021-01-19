@@ -31,7 +31,7 @@ async fn main() -> EnvoyResult<()> {
         RequestHeaders::new()
             .add_method(RequestMethod::GET)
             .add_scheme(Scheme::HTTPS)
-            .add_authority("www.delta.com")
+            .add_authority("www.google.com")
             .add_path("/")
             .as_headers(),
         true,

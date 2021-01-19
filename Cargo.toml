@@ -11,6 +11,7 @@ repository = "https://github.com/crockeo/envoy-mobile-rs"
 [dependencies]
 envoy-mobile-sys = { path = "../envoy-mobile-sys", version = "0.1.2" }
 futures = "0.3.12"
+lazy_static = "1.4.0"
 libc = "0.2.82"
 
 [dependencies.tokio]
