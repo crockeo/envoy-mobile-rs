@@ -10,6 +10,7 @@ mod result;
 mod scheme;
 mod stream;
 
+use futures::select;
 use tokio;
 
 use engine::EngineBuilder;
@@ -51,15 +52,17 @@ async fn main() -> EnvoyResult<()> {
     //     }
     // }
 
-    // TODO: do this after implementing:
-    //   - FutureExt
-    //   - Iterator
-    //   - futures::Future
-    // select! {
-    //     (_) = stream.on_error().fuse() => {},
-    //     () = stream.on_complete().fuse() => {},
-    //     () = stream.on_cancel().fuse() => {},
-    // }
+    select! {
+        _ = stream.on_error() => {
+            println!("error");
+        },
+        () = stream.on_complete() => {
+            println!("complete");
+        },
+        () = stream.on_cancel() => {
+            println!("cancel");
+        },
+    }
 
     engine.terminate();
 

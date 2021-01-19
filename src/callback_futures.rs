@@ -1,60 +1,88 @@
-use futures::future::Future;
+use futures::future::{FusedFuture, Future};
 use futures::task::{Context, Poll, Waker};
 
+use std::mem;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use crate::result::{EnvoyError, EnvoyResult};
 
+struct CallbackFutureState<T> {
+    value: Option<T>,
+    waker: Option<Waker>,
+    sent: bool,
+}
+
 pub struct CallbackFuture<T> {
-    value_waker: Mutex<(Option<T>, Option<Waker>)>,
+    state: Mutex<CallbackFutureState<T>>,
 }
 
 impl<T> CallbackFuture<T> {
     pub fn new() -> Self {
         Self {
-            value_waker: Mutex::new((None, None)),
+            state: Mutex::new(CallbackFutureState {
+                value: None,
+                waker: None,
+                sent: false,
+            }),
         }
     }
 
     pub fn put(&self, new_value: T) -> EnvoyResult<()> {
-        let mut value_waker = self.value_waker.lock().unwrap();
-        if value_waker.0.is_some() {
+        let mut state = self.state.lock().unwrap();
+        if state.value.is_some() || state.sent {
             return Err(EnvoyError::AlreadyClosed);
         }
-        value_waker.0 = Some(new_value);
-        if let Some(waker) = &value_waker.1 {
+
+        state.value = Some(new_value);
+        if let Some(waker) = &state.waker {
             waker.wake_by_ref();
         }
         Ok(())
     }
-}
 
-impl<T: Clone> Future for CallbackFuture<T> {
-    type Output = T;
+    fn poll_impl(&self, ctx: &mut Context<'_>) -> Poll<T> {
+        let mut state = self.state.lock().unwrap();
+        if state.sent {
+            panic!("attempting to re-consume future output after it was sent");
+        }
 
-    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut value_waker = self.value_waker.lock().unwrap();
-        if let Some(value) = &value_waker.0 {
-            Poll::Ready(value.clone())
+        let value = mem::replace(&mut state.value, None);
+        if let Some(value) = value {
+            state.sent = true;
+            Poll::Ready(value)
         } else {
-            value_waker.1 = Some(ctx.waker().clone());
+            state.waker = Some(ctx.waker().clone());
             Poll::Pending
         }
     }
 }
 
-impl<'a, T: Clone> Future for &'a CallbackFuture<T> {
+impl<T> Future for CallbackFuture<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut value_waker = self.value_waker.lock().unwrap();
-        if let Some(value) = &value_waker.0 {
-            Poll::Ready(value.clone())
-        } else {
-            value_waker.1 = Some(ctx.waker().clone());
-            Poll::Pending
-        }
+        self.poll_impl(ctx)
+    }
+}
+
+impl<T> Future for &CallbackFuture<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.poll_impl(ctx)
+    }
+}
+
+impl<T> FusedFuture for CallbackFuture<T> {
+    fn is_terminated(&self) -> bool {
+        self.state.lock().unwrap().sent
+    }
+}
+
+impl<T> FusedFuture for &CallbackFuture<T> {
+    fn is_terminated(&self) -> bool {
+        self.state.lock().unwrap().sent
     }
 }
 
