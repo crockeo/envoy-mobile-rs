@@ -152,7 +152,7 @@ impl Stream {
         let context = context as *const StreamContext;
         let _ = (*context)
             .on_headers
-            .put(Headers::from_envoy_headers(envoy_headers));
+            .put(Headers::from_envoy_headers(envoy_headers).unwrap());
         if end_stream {
             let _ = (*context).on_headers.close();
         }
@@ -181,7 +181,7 @@ impl Stream {
         let context = context as *const StreamContext;
         let _ = (*context)
             .on_metadata
-            .put(Headers::from_envoy_headers(envoy_metadata));
+            .put(Headers::from_envoy_headers(envoy_metadata).unwrap());
         ptr::null_mut::<c_void>()
     }
 
@@ -192,7 +192,7 @@ impl Stream {
         let context = context as *const StreamContext;
         let _ = (*context)
             .on_trailers
-            .put(Headers::from_envoy_headers(envoy_trailers));
+            .put(Headers::from_envoy_headers(envoy_trailers).unwrap());
         ptr::null_mut::<c_void>()
     }
 

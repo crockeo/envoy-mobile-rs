@@ -29,7 +29,7 @@ impl Headers {
         Ok(self.add(key.as_str()?, value.as_str()?))
     }
 
-    pub fn from_envoy_headers(envoy_headers: envoy_mobile_sys::envoy_headers) -> Self {
+    pub fn from_envoy_headers(envoy_headers: envoy_mobile_sys::envoy_headers) -> EnvoyResult<Self> {
         let envoy_headers_slice;
         unsafe {
             envoy_headers_slice =
@@ -38,14 +38,10 @@ impl Headers {
 
         let mut headers = Headers(HashMap::new());
         for envoy_header in envoy_headers_slice {
-            // TODO: take the time to bubble this error up nicely; i don't know how much we can
-            // trust envoy-mobile to do UTF8 validation
-            headers = headers
-                .add_data(
-                    Data::from_envoy_data(envoy_header.key),
-                    Data::from_envoy_data(envoy_header.value),
-                )
-                .unwrap();
+            headers = headers.add_data(
+                Data::from_envoy_data(envoy_header.key),
+                Data::from_envoy_data(envoy_header.value),
+            )?;
         }
 
         unsafe {
@@ -55,7 +51,7 @@ impl Headers {
             libc::free(envoy_headers.headers as *mut c_void);
         }
 
-        headers
+        Ok(headers)
     }
 
     pub fn as_envoy_headers(self) -> envoy_mobile_sys::envoy_headers {
