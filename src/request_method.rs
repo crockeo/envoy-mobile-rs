@@ -1,22 +1,20 @@
+#[derive(Debug)]
 pub enum RequestMethod {
-    // TODO: when i land, look up reference and populate everything
+    // copied from Mozilla HTTP request method list:
+    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods
     GET,
-    POST,
     HEAD,
+    POST,
     PUT,
     DELETE,
+    CONNECT,
+    OPTIONS,
+    TRACE,
+    PATCH,
 }
 
 impl ToString for RequestMethod {
     fn to_string(&self) -> String {
-        use RequestMethod::*;
-        match self {
-            GET => "GET",
-            POST => "POST",
-            HEAD => "HEAD",
-            PUT => "PUT",
-            DELETE => "DELETE",
-        }
-        .to_string()
+        format!("{:?}", self)
     }
 }
