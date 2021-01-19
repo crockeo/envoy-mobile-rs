@@ -7,6 +7,8 @@ use std::ptr;
 use std::slice;
 use std::str::{self, Utf8Error};
 
+use crate::result::EnvoyResult;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Headers(HashMap<String, Vec<String>>);
 
@@ -179,11 +181,52 @@ impl Data {
     }
 }
 
-pub struct HTTPError {}
+#[derive(Debug)]
+pub enum HTTPErrorCode {
+    Undefined,
+    StreamReset,
+    ConnectionFailure,
+    BufferLimitExceeded,
+    RequestTimeout,
+}
+
+impl HTTPErrorCode {
+    fn from_envoy_error_code(
+        error_code: envoy_mobile_sys::envoy_error_code_t,
+    ) -> Option<HTTPErrorCode> {
+        use HTTPErrorCode::*;
+        match error_code {
+            envoy_mobile_sys::envoy_error_code_t_ENVOY_UNDEFINED_ERROR => Some(Undefined),
+            envoy_mobile_sys::envoy_error_code_t_ENVOY_STREAM_RESET => Some(StreamReset),
+            envoy_mobile_sys::envoy_error_code_t_ENVOY_CONNECTION_FAILURE => {
+                Some(ConnectionFailure)
+            }
+            envoy_mobile_sys::envoy_error_code_t_ENVOY_BUFFER_LIMIT_EXCEEDED => {
+                Some(BufferLimitExceeded)
+            }
+            envoy_mobile_sys::envoy_error_code_t_ENVOY_REQUEST_TIMEOUT => Some(RequestTimeout),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HTTPError {
+    error_code: HTTPErrorCode,
+    message: String,
+    attempt_count: i32,
+}
 
 impl HTTPError {
-    pub fn from_envoy_error(_envoy_error: envoy_mobile_sys::envoy_error) -> Self {
-        todo!()
+    pub fn from_envoy_error(envoy_error: envoy_mobile_sys::envoy_error) -> EnvoyResult<Self> {
+        Ok(HTTPError {
+            error_code: HTTPErrorCode::from_envoy_error_code(envoy_error.error_code)
+                .expect("invalid http error code received from envoy-mobile"),
+            message: Data::from_envoy_data(envoy_error.message)
+                .as_str()?
+                .to_string(),
+            attempt_count: envoy_error.attempt_count,
+        })
     }
 }
 

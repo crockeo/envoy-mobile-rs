@@ -205,7 +205,7 @@ impl Stream {
         let context = context as *mut StreamContext;
         let _ = (*context)
             .on_error
-            .put(HTTPError::from_envoy_error(envoy_error));
+            .put(HTTPError::from_envoy_error(envoy_error).unwrap());
         let _ = Box::from_raw(context);
         ptr::null_mut::<c_void>()
     }

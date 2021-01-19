@@ -4,7 +4,7 @@ use futures::{Future, Stream};
 
 use std::mem;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crate::result::{EnvoyError, EnvoyResult};
 
