@@ -5,7 +5,7 @@ use std::ffi::{c_void, CStr, CString};
 use crate::callback_futures::CallbackFuture;
 use crate::log_level::LogLevel;
 use crate::result::{EnvoyError, EnvoyResult};
-use crate::stream::Stream;
+use crate::stream::{SendingHeaders, Stream};
 
 pub struct EngineBuilder {
     log_level: LogLevel,
@@ -197,13 +197,13 @@ impl Engine {
         unsafe { &(*self.context_ptr).on_exit }
     }
 
-    pub fn stream(&self) -> EnvoyResult<Stream> {
+    pub fn stream(&self) -> EnvoyResult<Stream<SendingHeaders>> {
         // SAFETY: this is trivially safe; guaranteed not to fail.
         let stream_handle;
         unsafe {
             stream_handle = envoy_mobile_sys::init_stream(self.handle);
         }
-        Stream::new(stream_handle)
+        Stream::<SendingHeaders>::new(stream_handle)
     }
 
     pub fn terminate(self) {

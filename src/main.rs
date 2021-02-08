@@ -2,6 +2,7 @@
 
 mod bridge_util;
 mod callback_futures;
+mod config_template;
 mod engine;
 mod headers;
 mod log_level;
@@ -25,16 +26,13 @@ async fn main() -> EnvoyResult<()> {
     let engine = EngineBuilder::new(LogLevel::Error).build()?;
     engine.on_engine_running().await;
 
-    let mut stream = engine.stream()?;
-
-    stream.send_headers(
+    let stream = engine.stream()?.send_headers_and_close(
         RequestHeaders::new()
             .add_method(RequestMethod::GET)
             .add_scheme(Scheme::HTTPS)
             .add_authority("www.google.com")
             .add_path("/")
             .as_headers(),
-        true,
     )?;
 
     while let Some(headers) = stream.on_headers().next().await {
