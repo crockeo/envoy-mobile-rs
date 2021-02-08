@@ -1,5 +1,13 @@
 # envoy-mobile-rs
 
+⚠️ ⚠️ ⚠️
+
+At present, this **does not build** because `bazel` requires a git repo,
+which `cargo` strips away for dependencies. I don't have time to fix it just yet,
+but bear with me.
+
+⚠️ ⚠️ ⚠️
+
 Rust bindings to [envoy-mobile](https://github.com/envoyproxy/envoy-mobile).
 
 ## What?
