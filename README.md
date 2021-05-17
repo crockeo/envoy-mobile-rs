@@ -1,13 +1,5 @@
 # envoy-mobile-rs
 
-⚠️ ⚠️ ⚠️
-
-At present, this **does not build** because `bazel` requires a git repo,
-which `cargo` strips away for dependencies. I don't have time to fix it just yet,
-but bear with me.
-
-⚠️ ⚠️ ⚠️
-
 Rust bindings to [envoy-mobile](https://github.com/envoyproxy/envoy-mobile).
 
 ## What?
@@ -34,3 +26,15 @@ If you're in the microservice world, there's a sizable chance that you're using
 well. It can be advantageous to have the same HTTP implementation across each process. That's where
 envoy-mobile-rs comes in; in such a situation, you may want to embed Envoy in-process to handle
 your HTTP.
+
+## How?
+
+1. Make sure you have `libenvoy_mobile.so` discoverable on your `LIBRARY_PATH`.
+1. Add this as a normal dependency.
+1. You're done!
+
+It would be nicer to have libenvoy_mobile.so
+compiled during a normal build
+so that you don't have to install it first.
+Unfortunately there are complications between Bazel + Cargo
+so this will have to do for now.
