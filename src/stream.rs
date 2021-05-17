@@ -187,6 +187,7 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *mut StreamContext;
+        (*context).on_data.maybe_close();
         let on_trailers = &(*context).on_trailers;
         on_trailers.put_and_report(Headers::from_envoy_headers(envoy_trailers));
         ptr::null_mut::<c_void>()
@@ -197,6 +198,7 @@ impl Stream {
         context: *mut c_void,
     ) -> *mut c_void {
         let context = context as *mut StreamContext;
+        (*context).on_data.maybe_close();
         let on_error = &(*context).on_error;
         on_error.put_and_report(HTTPError::from_envoy_error(envoy_error));
         ptr::null_mut::<c_void>()
@@ -204,6 +206,7 @@ impl Stream {
 
     unsafe extern "C" fn dispatch_on_complete(context: *mut c_void) -> *mut c_void {
         let context = context as *mut StreamContext;
+        (*context).on_data.maybe_close();
         let on_complete = &(*context).on_complete;
         on_complete.put_and_report(Ok(()));
         ptr::null_mut::<c_void>()
@@ -211,6 +214,7 @@ impl Stream {
 
     unsafe extern "C" fn dispatch_on_cancel(context: *mut c_void) -> *mut c_void {
         let context = context as *mut StreamContext;
+        (*context).on_data.maybe_close();
         let on_cancel = &(*context).on_cancel;
         on_cancel.put_and_report(Ok(()));
         ptr::null_mut::<c_void>()

@@ -136,12 +136,21 @@ impl<T> CallbackStream<T> {
             return Err(EnvoyError::AlreadyClosed);
         }
         state.closed = true;
+        if let Some(waker) = &state.waker {
+            waker.wake_by_ref();
+        }
         Ok(())
     }
 
     pub fn maybe_close(&self) {
         let mut state = self.state.lock().unwrap();
+        let was_closed = state.closed;
         state.closed = true;
+        if !was_closed {
+            if let Some(waker) = &state.waker {
+                waker.wake_by_ref();
+            }
+        }
     }
 
     fn poll_next_impl(&self, ctx: &mut Context<'_>) -> Poll<Option<T>> {
