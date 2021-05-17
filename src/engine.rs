@@ -1,6 +1,7 @@
 use envoy_mobile_sys;
 
 use std::ffi::{c_void, CStr, CString};
+use std::ptr::null;
 
 use crate::callback_futures::CallbackFuture;
 use crate::log_level::LogLevel;
@@ -18,6 +19,7 @@ pub struct EngineBuilder {
     app_version: String,
     app_id: String,
     virtual_clusters: String,
+    stream_idle_timeout_seconds: u64,
 }
 
 impl EngineBuilder {
@@ -33,14 +35,15 @@ impl EngineBuilder {
             app_version: "unspecified".to_string(),
             app_id: "unspecified".to_string(),
             virtual_clusters: "[]".to_string(),
+            stream_idle_timeout_seconds: 0,
         }
     }
 
     pub fn build(self) -> EnvoyResult<Engine> {
-        Engine::new(self.build_config(), self.log_level)
+        Engine::new(self.build_config()?, self.log_level)
     }
 
-    fn build_config(&self) -> String {
+    fn build_config(&self) -> EnvoyResult<String> {
         // SAFETY: again, this is just trusting envoy-mobile. We have to assume that the c string
         // they provide under `config_template` is a valid point in memory & null-terminated.
         let config_template;
@@ -78,6 +81,16 @@ impl EngineBuilder {
                 self.stats_flush_seconds.to_string(),
             ),
             ("{{ virtual_clusters }}", self.virtual_clusters.clone()),
+            (
+                "{{ stream_idle_timeout_seconds }}",
+                self.stream_idle_timeout_seconds.to_string(),
+            ),
+            // TODO: provide an API to interface with these configs
+            ("{{ fake_remote_listener }}", "".to_string()),
+            ("{{ fake_cluster_matchers }}", "".to_string()),
+            ("{{ route_reset_filter }}", "".to_string()),
+            ("{{ fake_remote_cluster }}", "".to_string()),
+            ("{{ stats_sink }}", "".to_string()),
         ];
 
         // this template doesn't change, and is written in ASCII under:
@@ -88,7 +101,11 @@ impl EngineBuilder {
             config_template = config_template.replace(search_str, replacement.as_str());
         }
 
-        config_template
+        if config_template.contains("{{") {
+            println!("{}", config_template);
+            return Err(EnvoyError::InvalidConfig);
+        }
+        Ok(config_template)
     }
 
     pub fn add_stats_domain(mut self, stats_domain: &str) -> Self {
@@ -126,6 +143,11 @@ impl EngineBuilder {
         self.virtual_clusters = virutal_clusters.to_owned();
         self
     }
+
+    pub fn add_stream_timeout_seconds(mut self, stream_idle_timeout_seconds: u64) -> Self {
+        self.stream_idle_timeout_seconds = stream_idle_timeout_seconds;
+        self
+    }
 }
 
 struct EngineContext {
@@ -148,19 +170,25 @@ impl Engine {
 
         // SAFETY: This is trivially correct, so long as we trust envoy-mobile. Generally speaking,
         // init_engine is nothing to worry about. Pay more attention to the call to run_engine.
-        let handle;
-        unsafe {
-            handle = envoy_mobile_sys::init_engine();
-        }
-        if handle == 0 {
-            return Err(EnvoyError::InvalidHandle);
-        }
-
         let envoy_engine_callbacks = envoy_mobile_sys::envoy_engine_callbacks {
             on_engine_running: Some(Engine::dispatch_on_engine_running),
             on_exit: Some(Engine::dispatch_on_exit),
             context: context_ptr as *mut c_void,
         };
+        let envoy_logger = envoy_mobile_sys::envoy_logger {
+            log: None,
+            release: Some(envoy_mobile_sys::envoy_noop_const_release),
+            context: null(),
+        };
+
+        let handle;
+        unsafe {
+            handle = envoy_mobile_sys::init_engine(envoy_engine_callbacks, envoy_logger);
+        }
+        if handle == 0 {
+            return Err(EnvoyError::InvalidHandle);
+        }
+
         let config_c_str = CString::new(config).unwrap();
         let log_level_c_str = CString::new(log_level.to_string()).unwrap();
 
@@ -174,7 +202,6 @@ impl Engine {
         unsafe {
             status = envoy_mobile_sys::run_engine(
                 handle,
-                envoy_engine_callbacks,
                 config_c_str.as_bytes_with_nul().as_ptr() as *const i8,
                 log_level_c_str.as_bytes_with_nul().as_ptr() as *const i8,
             );

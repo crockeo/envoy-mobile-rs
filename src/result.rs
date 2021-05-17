@@ -9,6 +9,9 @@ use crate::bridge_util::HTTPError;
 /// Wrapper around all the different kinds of errors that can occur while using this package.
 #[derive(Debug)]
 pub enum EnvoyError {
+    /// Raised when an invalid piece of configuration is provided.
+    InvalidConfig,
+
     /// Denotes an occurrence when a handle created by envoy-mobile was invalid, whatever "invalid"
     /// means for that particular handle type.
     InvalidHandle,

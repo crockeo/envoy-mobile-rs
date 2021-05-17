@@ -33,7 +33,7 @@ impl Headers {
         let envoy_headers_slice;
         unsafe {
             envoy_headers_slice =
-                slice::from_raw_parts(envoy_headers.headers, envoy_headers.length as usize);
+                slice::from_raw_parts(envoy_headers.entries, envoy_headers.length as usize);
         }
 
         let mut headers = Headers(HashMap::new());
@@ -48,7 +48,7 @@ impl Headers {
             // normally one might use envoy_mobile_sys::release_envoy_headers, but we already
             // release each of the envoy_data entries while iterating through, so we want to avoid
             // a double free
-            libc::free(envoy_headers.headers as *mut c_void);
+            libc::free(envoy_headers.entries as *mut c_void);
         }
 
         Ok(headers)
@@ -63,11 +63,11 @@ impl Headers {
         let headers_ptr;
         unsafe {
             headers_ptr = envoy_mobile_sys::safe_malloc(
-                (headers_len * mem::size_of::<envoy_mobile_sys::envoy_header>()) as u64,
-            ) as *mut envoy_mobile_sys::envoy_header;
+                (headers_len * mem::size_of::<envoy_mobile_sys::envoy_map_entry>()) as u64,
+            ) as *mut envoy_mobile_sys::envoy_map_entry;
         }
 
-        let headers: &mut [envoy_mobile_sys::envoy_header];
+        let headers: &mut [envoy_mobile_sys::envoy_map_entry];
         unsafe {
             headers = std::slice::from_raw_parts_mut(headers_ptr, headers_len);
         }
@@ -75,7 +75,7 @@ impl Headers {
         let mut i = 0;
         for (key, values) in self.0.into_iter() {
             for value in values.into_iter() {
-                headers[i] = envoy_mobile_sys::envoy_header {
+                headers[i] = envoy_mobile_sys::envoy_map_entry {
                     key: Data::from_bytes(key.clone()).as_envoy_data(),
                     value: Data::from_bytes(value).as_envoy_data(),
                 };
@@ -85,7 +85,7 @@ impl Headers {
 
         envoy_mobile_sys::envoy_headers {
             length: headers_len as i32,
-            headers: headers_ptr,
+            entries: headers_ptr,
         }
     }
 }
