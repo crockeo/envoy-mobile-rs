@@ -5,6 +5,8 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rustc-link-search=.");
+    println!("cargo:rustc-link-lib=envoy_mobile");
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
