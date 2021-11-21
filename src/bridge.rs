@@ -2,6 +2,8 @@ use std::alloc;
 use std::ffi;
 use std::marker::PhantomData;
 use std::mem;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::ptr;
 use std::string::FromUtf8Error;
 
@@ -20,13 +22,33 @@ use crate::sys;
 //
 // - extend the lifetime of data passed across program boundaries
 //   a la string views
-//
-// - config loading and parametrization with the engine builder
 
 pub struct EngineBuilder {
     engine_callbacks: EngineCallbacks,
     logger: Logger,
     event_tracker: EventTracker,
+    connect_timeout_seconds: usize,
+    dns_refresh_rate_seconds: usize,
+    dns_fail_base_interval_seconds: usize,
+    dns_fail_max_interval_seconds: usize,
+    dns_query_timeout_seconds: usize,
+    // TODO
+    // - &dns_preresolve_hostnames []
+    enable_interface_binding: bool,
+    h2_connection_keepalive_idle_interval_seconds: usize,
+    h2_connection_keepalive_timeout: usize,
+    // TODO
+    // - &metadata {}
+    stats_domain: IpAddr,
+    stats_flush_interval_seconds: usize,
+    // TODO
+    // - &stats_sinks []
+    statsd_host: IpAddr,
+    statsd_port: u16,
+    stream_idle_timeout_seconds: usize,
+    per_try_idle_timeout_seconds: usize,
+    // TODO
+    // - &virtual_clusters []
 }
 
 impl EngineBuilder {
@@ -35,6 +57,20 @@ impl EngineBuilder {
             engine_callbacks: EngineCallbacks::default(),
             logger: Logger::default(),
             event_tracker: EventTracker::default(),
+            connect_timeout_seconds: 30,
+            dns_refresh_rate_seconds: 60,
+            dns_fail_base_interval_seconds: 2,
+            dns_fail_max_interval_seconds: 10,
+            dns_query_timeout_seconds: 30,
+            enable_interface_binding: false,
+            h2_connection_keepalive_idle_interval_seconds: 100000,
+            h2_connection_keepalive_timeout: 10,
+            stats_domain: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            stats_flush_interval_seconds: 60,
+            statsd_host: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            statsd_port: 8125,
+            stream_idle_timeout_seconds: 15,
+            per_try_idle_timeout_seconds: 15,
         }
     }
 
@@ -58,6 +94,89 @@ impl EngineBuilder {
         self
     }
 
+    pub fn with_connect_timeout_seconds(mut self, connect_timeout_seconds: usize) -> Self {
+        self.connect_timeout_seconds = connect_timeout_seconds;
+        self
+    }
+
+    pub fn with_dns_refresh_rate_seconds(mut self, dns_refresh_rate_seconds: usize) -> Self {
+        self.dns_refresh_rate_seconds = dns_refresh_rate_seconds;
+        self
+    }
+
+    pub fn with_dns_fail_interval(
+        mut self,
+        dns_fail_base_interval_seconds: usize,
+        dns_fail_max_interval_seconds: usize,
+    ) -> Self {
+        self.dns_fail_base_interval_seconds = dns_fail_base_interval_seconds;
+        self.dns_fail_max_interval_seconds = dns_fail_max_interval_seconds;
+        self
+    }
+
+    pub fn with_dns_query_timeout_seconds(mut self, dns_query_timeout_seconds: usize) -> Self {
+        self.dns_query_timeout_seconds = dns_query_timeout_seconds;
+        self
+    }
+
+    pub fn with_enable_interface_binding(mut self, enable_interface_binding: bool) -> Self {
+        self.enable_interface_binding = enable_interface_binding;
+        self
+    }
+
+    pub fn with_h2_connection_keepalive_idle_interval_seconds(
+        mut self,
+        h2_connection_keepalive_idle_interval_seconds: usize,
+    ) -> Self {
+        self.h2_connection_keepalive_idle_interval_seconds =
+            h2_connection_keepalive_idle_interval_seconds;
+        self
+    }
+
+    pub fn with_h2_connection_keepalive_timeout(
+        mut self,
+        h2_connection_keepalive_timeout: usize,
+    ) -> Self {
+        self.h2_connection_keepalive_timeout = h2_connection_keepalive_timeout;
+        self
+    }
+
+    pub fn with_stats_domain(mut self, stats_domain: IpAddr) -> Self {
+        self.stats_domain = stats_domain;
+        self
+    }
+
+    pub fn with_stats_flush_interval_seconds(
+        mut self,
+        stats_flush_interval_seconds: usize,
+    ) -> Self {
+        self.stats_flush_interval_seconds = stats_flush_interval_seconds;
+        self
+    }
+
+    pub fn with_statsd_host(mut self, statsd_host: IpAddr) -> Self {
+        self.statsd_host = statsd_host;
+        self
+    }
+
+    pub fn with_statsd_port(mut self, statsd_port: u16) -> Self {
+        self.statsd_port = statsd_port;
+        self
+    }
+
+    pub fn with_stream_idle_timeout_seconds(mut self, stream_idle_timeout_seconds: usize) -> Self {
+        self.stream_idle_timeout_seconds = stream_idle_timeout_seconds;
+        self
+    }
+
+    pub fn with_per_try_idle_timeout_seconds(
+        mut self,
+        per_try_idle_timeout_seconds: usize,
+    ) -> Self {
+        self.per_try_idle_timeout_seconds = per_try_idle_timeout_seconds;
+        self
+    }
+
     pub fn build<S: AsRef<str>>(self, config: S, log_level: LogLevel) -> Engine {
         let envoy_callbacks = self.engine_callbacks.into_envoy_engine_callbacks();
         let envoy_logger = self.logger.into_envoy_logger();
@@ -67,11 +186,51 @@ impl EngineBuilder {
             handle = sys::init_engine(envoy_callbacks, envoy_logger, envoy_event_tracker);
         }
 
-        let config = ffi::CString::new(config.as_ref()).unwrap();
+        let config_header = format!(
+            r"!ignore default_defs:
+- &connect_timeout {connect_timeout}s
+- &dns_refresh_rate {dns_refresh_rate}s
+- &dns_fail_base_interval {dns_fail_base_interval}s
+- &dns_fail_max_interval {dns_fail_max_interval}s
+- &dns_query_timeout {dns_query_timeout}s
+- &enable_interface_binding {enable_interface_binding}
+- &h2_connection_keepalive_idle_interval {h2_connection_keepalive_idle_interval}s
+- &h2_connection_keepalive_timeout {h2_connection_keepalive_timeout}s
+- &stats_domain {stats_domain}
+- &stats_flush_interval {stats_flush_interval}s
+- &statsd_host {statsd_host}
+- &statsd_port {statsd_port}
+- &stream_idle_timeout {stream_idle_timeout}s
+- &per_try_idle_timeout {per_try_idle_timeout}s",
+            connect_timeout = self.connect_timeout_seconds,
+            dns_refresh_rate = self.dns_refresh_rate_seconds,
+            dns_fail_base_interval = self.dns_fail_base_interval_seconds,
+            dns_fail_max_interval = self.dns_fail_max_interval_seconds,
+            dns_query_timeout = self.dns_query_timeout_seconds,
+            enable_interface_binding = self.enable_interface_binding,
+            h2_connection_keepalive_idle_interval =
+                self.h2_connection_keepalive_idle_interval_seconds,
+            h2_connection_keepalive_timeout = self.h2_connection_keepalive_timeout,
+            stats_domain = self.stats_domain,
+            stats_flush_interval = self.stats_flush_interval_seconds,
+            statsd_host = self.statsd_host,
+            statsd_port = self.statsd_port,
+            stream_idle_timeout = self.stream_idle_timeout_seconds,
+            per_try_idle_timeout = self.per_try_idle_timeout_seconds,
+        );
+
+        let config_body;
+        unsafe {
+            config_body = ffi::CStr::from_ptr(sys::config_template);
+        }
+        let config_body = config_body.to_str().unwrap();
+
+        let config = format!("{}\n{}", config_header, config_body);
+        let config_cstr = ffi::CString::new(config).unwrap();
         let log_level = ffi::CString::new(log_level.into_envoy_log_level()).unwrap();
         unsafe {
             // TODO: actually use the above config once i have config loading set up
-            sys::run_engine(handle, sys::config_template, log_level.into_raw());
+            sys::run_engine(handle, config_cstr.as_ptr(), log_level.into_raw());
         }
         Engine(handle)
     }
@@ -478,10 +637,7 @@ impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
     fn from(pairs: Vec<(S, S)>) -> Self {
         let mut entries = Vec::with_capacity(pairs.len());
         for (key, value) in pairs.into_iter() {
-            entries.push((
-                Data::from(key),
-                Data::from(value),
-            ));
+            entries.push((Data::from(key), Data::from(value)));
         }
         Map(entries)
     }
@@ -493,10 +649,10 @@ impl Map {
         let mut entries = Vec::with_capacity(length);
         for i in 0..length {
             let entry = &*envoy_map.entries.add(i);
-	    entries.push((
-		Data::from_envoy_data_no_release(&entry.key),
-		Data::from_envoy_data_no_release(&entry.value),
-	    ));
+            entries.push((
+                Data::from_envoy_data_no_release(&entry.key),
+                Data::from_envoy_data_no_release(&entry.value),
+            ));
         }
         sys::release_envoy_map(envoy_map);
         Self(entries)
@@ -505,10 +661,10 @@ impl Map {
     fn into_envoy_map(self) -> sys::envoy_map {
         let mut envoy_map_entries = Vec::with_capacity(self.0.len());
         for entry in self.0.into_iter() {
-	    envoy_map_entries.push(sys::envoy_map_entry {
-		key: entry.0.into_envoy_data(),
-		value: entry.1.into_envoy_data(),
-	    });
+            envoy_map_entries.push(sys::envoy_map_entry {
+                key: entry.0.into_envoy_data(),
+                value: entry.1.into_envoy_data(),
+            });
         }
 
         let mut envoy_map_entries = mem::ManuallyDrop::new(envoy_map_entries);
