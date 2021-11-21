@@ -18,52 +18,78 @@ use crate::sys;
 //   to be able to express callbacks.
 //   research this and maybe replace
 //
-// - limit the lifetime of the stream returned by the RunningEngine
+// - limit the lifetime of the stream returned by the Engine
 //   to be that of the running engine
 
 // TODO: go through and fix locations
 // when there's an envoy_status_t returned
 // but we don't do anything with it
 
-struct Engine(isize);
+struct EngineBuilder {
+    engine_callbacks: EngineCallbacks,
+    logger: Logger,
+    event_tracker: EventTracker,
+}
 
-impl Engine {
-    fn new(callbacks: EngineCallbacks, logger: Logger, event_tracker: EventTracker) -> Self {
-        let handle;
-        unsafe {
-            handle = sys::init_engine(
-                callbacks.into_envoy_engine_callbacks(),
-                logger.into_envoy_logger(),
-                event_tracker.into_envoy_event_tracker(),
-            )
-            .try_into()
-            .unwrap();
+impl EngineBuilder {
+    fn new() -> Self {
+        Self {
+            engine_callbacks: EngineCallbacks::default(),
+            logger: Logger::default(),
+            event_tracker: EventTracker::default(),
         }
-        Self(handle)
     }
 
-    fn run<S: AsRef<str>>(self, config: S, log_level: LogLevel) -> RunningEngine {
+    fn with_on_engine_running(mut self, on_engine_running: OnEngineRunning) -> Self {
+        self.engine_callbacks.on_engine_running = Some(on_engine_running);
+        self
+    }
+
+    fn with_on_exit(mut self, on_exit: OnExit) -> Self {
+        self.engine_callbacks.on_exit = Some(on_exit);
+        self
+    }
+
+    fn with_log(mut self, log: LoggerLog) -> Self {
+        self.logger.log = Some(log);
+        self
+    }
+
+    fn with_track(mut self, track: EventTrackerTrack) -> Self {
+        self.event_tracker.track = Some(track);
+        self
+    }
+
+    fn build<S: AsRef<str>>(self, config: S, log_level: LogLevel) -> Engine {
+        let envoy_callbacks = self.engine_callbacks.into_envoy_engine_callbacks();
+        let envoy_logger = self.logger.into_envoy_logger();
+        let envoy_event_tracker = self.event_tracker.into_envoy_event_tracker();
+        let handle;
+        unsafe {
+            handle = sys::init_engine(envoy_callbacks, envoy_logger, envoy_event_tracker);
+        }
+
         let config = ffi::CString::new(config.as_ref()).unwrap();
         let log_level = ffi::CString::new(log_level.as_envoy_log_level()).unwrap();
-
         unsafe {
             // TODO: actually use the above config once i have config loading set up
-            sys::run_engine(self.0, sys::config_template, log_level.into_raw());
+            sys::run_engine(handle, sys::config_template, log_level.into_raw());
         }
-        RunningEngine(self.0)
+        Engine(handle)
     }
 }
 
-struct RunningEngine(isize);
+struct Engine(isize);
 
-impl RunningEngine {
+impl Engine {
     // TODO: change the way this is returned to limit
-    // the lifetime of the Stream to the lifetime of the RunningEngine
+    // the lifetime of the Stream to the lifetime of the Engine
     fn new_stream<'a>(&'a self) -> StreamPrototype<'a> {
         let handle;
         unsafe {
             handle = sys::init_stream(self.0);
         }
+	println!("<<< {:?} >>>", handle);
         StreamPrototype::new(handle)
     }
 
@@ -151,66 +177,51 @@ struct Stream<'a> {
 }
 
 impl<'a> Stream<'a> {
-    fn send_headers(&mut self, headers: Headers, done: bool) {
-        // /**
-        //  * Send headers over an open HTTP stream. This method can be invoked once and needs to be called
-        //  * before send_data.
-        //  * @param stream, the stream to send headers over.
-        //  * @param headers, the headers to send.
-        //  * @param end_stream, supplies whether this is headers only.
-        //  * @return envoy_status_t, the resulting status of the operation.
-        //  */
-        // envoy_status_t send_headers(envoy_stream_t stream, envoy_headers headers, bool end_stream);
+    fn send_headers<T: Into<Headers>>(&mut self, headers: T, end_stream: bool) {
+	let headers = headers.into();
+	println!("{:?}", headers);
+        let envoy_headers = headers.into_envoy_map();
+        unsafe {
+            sys::send_headers(self.handle, envoy_headers, end_stream);
+        }
     }
 
-    fn send_data(&mut self, data: Data, done: bool) {
-        // /**
-        //  * Send data over an open HTTP stream. This method can be invoked multiple times.
-        //  * @param stream, the stream to send data over.
-        //  * @param data, the data to send.
-        //  * @param end_stream, supplies whether this is the last data in the stream.
-        //  * @return envoy_status_t, the resulting status of the operation.
-        //  */
-        // envoy_status_t send_data(envoy_stream_t stream, envoy_data data, bool end_stream);
+    fn send_data<T: Into<Data>>(&mut self, data: T, end_stream: bool) {
+        let envoy_data = data.into().into_envoy_data();
+        unsafe {
+            sys::send_data(self.handle, envoy_data, end_stream);
+        }
     }
 
-    fn send_metadata(&mut self, metadata: Headers) {
-        // /**
-        //  * Send metadata over an HTTP stream. This method can be invoked multiple times.
-        //  * @param stream, the stream to send metadata over.
-        //  * @param metadata, the metadata to send.
-        //  * @return envoy_status_t, the resulting status of the operation.
-        //  */
-        // envoy_status_t send_metadata(envoy_stream_t stream, envoy_headers metadata);
+    fn send_metadata<T: Into<Headers>>(&mut self, metadata: T) {
+        let envoy_metadata = metadata.into().into_envoy_map();
+        unsafe {
+            sys::send_metadata(self.handle, envoy_metadata);
+        }
     }
 
-    fn send_trailers(&mut self, trailers: Headers) {
-        // /**
-        //  * Send trailers over an open HTTP stream. This method can only be invoked once per stream.
-        //  * Note that this method implicitly ends the stream.
-        //  * @param stream, the stream to send trailers over.
-        //  * @param trailers, the trailers to send.
-        //  * @return envoy_status_t, the resulting status of the operation.
-        //  */
-        // envoy_status_t send_trailers(envoy_stream_t stream, envoy_headers trailers);
+    fn send_trailers<T: Into<Headers>>(&mut self, trailers: T) {
+        let envoy_trailers = trailers.into().into_envoy_map();
+        unsafe {
+            sys::send_trailers(self.handle, envoy_trailers);
+        }
     }
 
     fn reset_stream(self) {
-        // /**
-        //  * Detach all callbacks from a stream and send an interrupt upstream if supported by transport.
-        //  * @param stream, the stream to evict.
-        //  * @return envoy_status_t, the resulting status of the operation.
-        //  */
-        // envoy_status_t reset_stream(envoy_stream_t stream);
+        unsafe {
+            sys::reset_stream(self.handle);
+        }
     }
 
     fn read_data(&mut self, bytes_to_read: usize) {
-        // /**
-        //  * Notify the stream that the caller is ready to receive more data from the response stream. Only
-        //  * used in explicit flow control mode.
-        //  * @param bytes_to_read, the quantity of data the caller is prepared to process.
-        //  */
-        // envoy_status_t read_data(envoy_stream_t stream, size_t bytes_to_read);
+        // TODO: make this error if we're not
+        // in explicit flow control mode?
+        // or BETTER YET
+        // make this only available on a specific form of Stream
+        // that has explicit flow control mode enabled
+        unsafe {
+            sys::read_data(self.handle, bytes_to_read.try_into().unwrap());
+        }
     }
 }
 
@@ -290,6 +301,7 @@ impl HistogramStatUnit {
     }
 }
 
+#[derive(Debug)]
 enum ErrorCode {
     UndefinedError,
     StreamReset,
@@ -346,8 +358,15 @@ impl Network {
     }
 }
 
-#[derive(Debug)]
+#[derive(Eq, Clone, Debug, PartialEq)]
 struct Data(Vec<u8>);
+
+impl<S: AsRef<str>> From<S> for Data {
+    fn from(string: S) -> Self {
+	let string = string.as_ref().to_owned();
+	Self(Vec::from_iter(string.into_bytes()))
+    }
+}
 
 impl TryInto<String> for Data {
     type Error = ();
@@ -377,6 +396,9 @@ impl Data {
         let ptr = vec.as_mut_ptr();
         let length = vec.len();
 
+	// TODO: this is leaking memory!
+	// make it so we keep around the pointer to the vector
+	// and can therefore release it later
         sys::envoy_data {
             length: length.try_into().unwrap(),
             bytes: ptr,
@@ -390,9 +412,10 @@ impl Data {
     }
 }
 
+#[derive(Eq, Clone, Debug, PartialEq)]
 struct MapEntry {
-    key: Vec<u8>,
-    value: Vec<u8>,
+    key: Data,
+    value: Data,
 }
 
 impl MapEntry {
@@ -400,19 +423,20 @@ impl MapEntry {
         let key_data = Data::from_envoy_data_no_release(&envoy_map_entry.key);
         let value_data = Data::from_envoy_data_no_release(&envoy_map_entry.value);
         Self {
-            key: key_data.0,
-            value: value_data.0,
+            key: key_data,
+            value: value_data,
         }
     }
 
     fn into_envoy_map_entry(self) -> sys::envoy_map_entry {
         sys::envoy_map_entry {
-            key: Data::into_envoy_data(Data(self.key)),
-            value: Data::into_envoy_data(Data(self.value)),
+            key: self.key.into_envoy_data(),
+            value: self.value.into_envoy_data(),
         }
     }
 }
 
+#[derive(Debug)]
 struct Map {
     entries: Vec<MapEntry>,
 }
@@ -444,9 +468,23 @@ impl Map {
     }
 }
 
+impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
+    fn from(pairs: Vec<(S, S)>) -> Self {
+        let mut entries = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs.into_iter() {
+            entries.push(MapEntry {
+		key: Data::from(key),
+		value: Data::from(value),
+            });
+        }
+        Map { entries }
+    }
+}
+
 type Headers = Map;
 type StatsTags = Map;
 
+#[derive(Debug)]
 struct Error {
     error_code: ErrorCode,
     message: Data,
@@ -465,6 +503,7 @@ impl Error {
     }
 }
 
+#[derive(Debug)]
 struct StreamIntel {
     stream_id: i64,
     connection_id: i64,
@@ -620,16 +659,6 @@ impl Default for EngineCallbacks {
 }
 
 impl EngineCallbacks {
-    fn with_on_engine_running(mut self, on_engine_running: OnEngineRunning) -> Self {
-        self.on_engine_running = Some(on_engine_running);
-        self
-    }
-
-    fn with_on_exit(mut self, on_exit: OnExit) -> Self {
-        self.on_exit = Some(on_exit);
-        self
-    }
-
     fn into_envoy_engine_callbacks(self) -> sys::envoy_engine_callbacks {
         let engine_callbacks = Box::into_raw(Box::new(self));
         return sys::envoy_engine_callbacks {
@@ -667,11 +696,6 @@ impl Default for Logger {
 }
 
 impl Logger {
-    fn with_log(mut self, log: LoggerLog) -> Self {
-        self.log = Some(log);
-        self
-    }
-
     fn into_envoy_logger(self) -> sys::envoy_logger {
         let logger = Box::into_raw(Box::new(self));
         sys::envoy_logger {
@@ -707,11 +731,6 @@ impl Default for EventTracker {
 }
 
 impl EventTracker {
-    fn with_track(mut self, track: EventTrackerTrack) -> Self {
-        self.track = Some(track);
-        self
-    }
-
     fn into_envoy_event_tracker(self) -> sys::envoy_event_tracker {
         let event_tracker = Box::into_raw(Box::new(self));
         sys::envoy_event_tracker {
@@ -854,47 +873,88 @@ mod tests {
         }
     }
 
-    fn make_running_engine() -> (RunningEngine, Arc<Event>) {
+    fn make_engine() -> (Engine, Arc<Event>) {
         let engine_running = Arc::new(Event::new());
         let engine_terminated = Arc::new(Event::new());
 
-        let callbacks = {
+        let engine = {
             let engine_running = engine_running.clone();
             let engine_terminated = engine_terminated.clone();
 
-            EngineCallbacks::default()
+            EngineBuilder::new()
                 .with_on_engine_running(Box::new(move || {
                     engine_running.set();
                 }))
                 .with_on_exit(Box::new(move || {
                     engine_terminated.set();
                 }))
+                .with_log(Box::new(|data| {
+                    print!("{}", data.into_string().unwrap());
+                }))
+                .build("", LogLevel::Debug)
         };
-        let logger = Logger::default().with_log(Box::new(|data| {
-            print!("{}", data.into_string().unwrap());
-        }));
-        let event_tracker = EventTracker::default();
-
-        // TODO: populate config
-        let config: &str = "";
-        let engine = Engine::new(callbacks, logger, event_tracker).run(config, LogLevel::Info);
         engine_running.wait();
 
         (engine, engine_terminated)
     }
 
     #[test]
+    fn test_data_lifecycle() {
+	let data = Data::from("hello world");
+	let expected_contents = data.0.clone();
+
+	let converted_data;
+	unsafe {
+	    converted_data = Data::from_envoy_data(data.into_envoy_data());
+	}
+	let contents = converted_data.0;
+
+	assert_eq!(contents, expected_contents);
+    }
+
+    #[test]
+    fn test_map_lifecycle() {
+	let map = Map::from(vec![("hello", "world")]);
+	let expected_contents = map.entries.clone();
+
+	let converted_map;
+	unsafe {
+	    converted_map = Map::from_envoy_map(map.into_envoy_map());
+	}
+	let contents = converted_map.entries;
+
+	assert_eq!(contents, expected_contents);
+    }
+
+    #[test]
     fn test_engine_lifecycle() {
-        let (engine, engine_terminated) = make_running_engine();
+        let (engine, engine_terminated) = make_engine();
         engine.terminate();
         engine_terminated.wait();
     }
 
     #[test]
     fn test_stream_lifecycle() {
-        let (engine, engine_terminated) = make_running_engine();
+        let (engine, engine_terminated) = make_engine();
 
-        let mut stream = engine.new_stream().start(false);
+        let mut stream = engine
+	    .new_stream()
+	    .with_on_headers(Box::new(|headers: Map, end_stream: bool, stream_intel: StreamIntel| {
+		println!("headers {:?} {:?} {:?}", headers, end_stream, stream_intel);
+	    }))
+	    .with_on_data(Box::new(|data: Data, end_stream: bool, stream_intel: StreamIntel| {
+		println!("data: {:?} {:?} {:?}", data, end_stream, stream_intel);
+	    }))
+	    .start(false);
+        stream.send_headers(
+            vec![
+                (":method", "GET"),
+                (":scheme", "https"),
+                (":authority", "www.google.com"),
+                (":path", "/"),
+            ],
+            true,
+        );
         // TODO: do something with the stream
 
         engine.terminate();
