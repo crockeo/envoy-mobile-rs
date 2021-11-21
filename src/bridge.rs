@@ -61,7 +61,7 @@ impl EngineBuilder {
             dns_refresh_rate_seconds: 60,
             dns_fail_base_interval_seconds: 2,
             dns_fail_max_interval_seconds: 10,
-            dns_query_timeout_seconds: 30,
+            dns_query_timeout_seconds: 25,
             enable_interface_binding: false,
             h2_connection_keepalive_idle_interval_seconds: 100000,
             h2_connection_keepalive_timeout: 10,
