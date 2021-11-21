@@ -11,19 +11,19 @@ use std::string::FromUtf8Error;
 
 use crate::sys;
 
-// TODO: some notes on high level design here:
+// some things i don't like and want to work on
 //
-// - i don't like having to wrap all of the callbacks in ptrs.
-//   i know they're pointers normally, but i wish there was a more rustic way
-//   to be able to express callbacks.
-//   research this and maybe replace
+// - callbacks need to be wrapped in boxes all the time
+//   look to see if there's a good way to represent them statically
 //
-// - limit the lifetime of the stream returned by the Engine
-//   to be that of the running engine
-
-// TODO: go through and fix locations
-// when there's an envoy_status_t returned
-// but we don't do anything with it
+// - represent states of a stream in types
+//   instead of no-opping
+//
+// - check that envoy_status_t is good
+//   and error if it's not
+//
+// - extend the lifetime of data passed across program boundaries
+//   a la string views
 
 struct EngineBuilder {
     engine_callbacks: EngineCallbacks,
@@ -90,6 +90,21 @@ impl Engine {
             handle = sys::init_stream(self.0);
         }
         StreamPrototype::new(handle)
+    }
+
+    fn flush_stats(&self) {
+	unsafe {
+	    sys::flush_stats(self.0);
+	}
+    }
+
+    fn dump_stats(&self) -> Data {
+	let mut envoy_data;
+	unsafe {
+	    envoy_data = sys::envoy_nodata;
+	    sys::dump_stats(self.0, &envoy_data as *const sys::envoy_data as *mut sys::envoy_data);
+	    Data::from_envoy_data(envoy_data)
+	}
     }
 
     fn terminate(self) {
@@ -786,96 +801,6 @@ impl EventTracker {
     }
 }
 
-// /**
-//  * Update the network interface to the preferred network for opening new streams.
-//  * Note that this state is shared by all engines.
-//  * @param network, the network to be preferred for new streams.
-//  * @return envoy_status_t, the resulting status of the operation.
-//  */
-// envoy_status_t set_preferred_network(envoy_network_t network);
-
-// /**
-//  * Increment a counter with the given elements and by the given count.
-//  * @param engine, the engine that owns the counter.
-//  * @param elements, the string that identifies the counter to increment.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param count, the count to increment by.
-//  */
-// envoy_status_t record_counter_inc(envoy_engine_t, const char* elements, envoy_stats_tags tags,
-//                                   uint64_t count);
-
-// /**
-//  * Set a gauge of a given string of elements with the given value.
-//  * @param engine, the engine that owns the gauge.
-//  * @param elements, the string that identifies the gauge to set value with.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param value, the value to set to the gauge.
-//  */
-// envoy_status_t record_gauge_set(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
-//                                 uint64_t value);
-
-// /**
-//  * Add the gauge with the given string of elements and by the given amount.
-//  * @param engine, the engine that owns the gauge.
-//  * @param elements, the string that identifies the gauge to add to.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param amount, the amount to add to the gauge.
-//  */
-// envoy_status_t record_gauge_add(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
-//                                 uint64_t amount);
-
-// /**
-//  * Subtract from the gauge with the given string of elements and by the given amount.
-//  * @param engine, the engine that owns the gauge.
-//  * @param elements, the string that identifies the gauge to subtract from.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param amount, amount to subtract from the gauge.
-//  */
-// envoy_status_t record_gauge_sub(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
-//                                 uint64_t amount);
-
-// /**
-//  * Add another recorded amount to the histogram with the given string of elements and unit
-//  * measurement.
-//  * @param engine, the engine that owns the histogram.
-//  * @param elements, the string that identifies the histogram to subtract from.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param value, amount to record as a new value for the histogram distribution.
-//  * @param unit_measure, the unit of measurement (e.g. milliseconds, bytes, etc.)
-//  */
-// envoy_status_t record_histogram_value(envoy_engine_t engine, const char* elements,
-//                                       envoy_stats_tags tags, uint64_t value,
-//                                       envoy_histogram_stat_unit_t unit_measure);
-
-// /**
-//  * Flush the stats sinks outside of a flushing interval.
-//  * Note: flushing before the engine has started will result in a no-op.
-//  * Note: stats flushing may not be synchronous.
-//  * Therefore, this function may return prior to flushing taking place.
-//  */
-// void flush_stats(envoy_engine_t engine);
-
-// /**
-//  * Collect a snapshot of all active stats.
-//  * Note: this function may block for some time while collecting stats.
-//  * @param engine, the engine whose stats to dump.
-//  * @param data, out parameter to populate with stats data.
-//  */
-// envoy_status_t dump_stats(envoy_engine_t engine, envoy_data* data);
-
-// /**
-//  * Statically register APIs leveraging platform libraries.
-//  * Warning: Must be completed before any calls to run_engine().
-//  * @param name, identifier of the platform API
-//  * @param api, type-erased c struct containing function pointers and context.
-//  * @return envoy_status_t, the resulting status of the operation.
-//  */
-// envoy_status_t register_platform_api(const char* name, void* api);
-
-// #ifdef __cplusplus
-// } // functions
-// #endif
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1011,3 +936,79 @@ mod tests {
         engine_terminated.wait();
     }
 }
+
+// TODO: implement remaining functions at some point(tm)
+
+// /**
+//  * Update the network interface to the preferred network for opening new streams.
+//  * Note that this state is shared by all engines.
+//  * @param network, the network to be preferred for new streams.
+//  * @return envoy_status_t, the resulting status of the operation.
+//  */
+// envoy_status_t set_preferred_network(envoy_network_t network);
+
+// /**
+//  * Increment a counter with the given elements and by the given count.
+//  * @param engine, the engine that owns the counter.
+//  * @param elements, the string that identifies the counter to increment.
+//  * @param tags, a map of {key, value} pairs of tags.
+//  * @param count, the count to increment by.
+//  */
+// envoy_status_t record_counter_inc(envoy_engine_t, const char* elements, envoy_stats_tags tags,
+//                                   uint64_t count);
+
+// /**
+//  * Set a gauge of a given string of elements with the given value.
+//  * @param engine, the engine that owns the gauge.
+//  * @param elements, the string that identifies the gauge to set value with.
+//  * @param tags, a map of {key, value} pairs of tags.
+//  * @param value, the value to set to the gauge.
+//  */
+// envoy_status_t record_gauge_set(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
+//                                 uint64_t value);
+
+// /**
+//  * Add the gauge with the given string of elements and by the given amount.
+//  * @param engine, the engine that owns the gauge.
+//  * @param elements, the string that identifies the gauge to add to.
+//  * @param tags, a map of {key, value} pairs of tags.
+//  * @param amount, the amount to add to the gauge.
+//  */
+// envoy_status_t record_gauge_add(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
+//                                 uint64_t amount);
+
+// /**
+//  * Subtract from the gauge with the given string of elements and by the given amount.
+//  * @param engine, the engine that owns the gauge.
+//  * @param elements, the string that identifies the gauge to subtract from.
+//  * @param tags, a map of {key, value} pairs of tags.
+//  * @param amount, amount to subtract from the gauge.
+//  */
+// envoy_status_t record_gauge_sub(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
+//                                 uint64_t amount);
+
+// /**
+//  * Add another recorded amount to the histogram with the given string of elements and unit
+//  * measurement.
+//  * @param engine, the engine that owns the histogram.
+//  * @param elements, the string that identifies the histogram to subtract from.
+//  * @param tags, a map of {key, value} pairs of tags.
+//  * @param value, amount to record as a new value for the histogram distribution.
+//  * @param unit_measure, the unit of measurement (e.g. milliseconds, bytes, etc.)
+//  */
+// envoy_status_t record_histogram_value(envoy_engine_t engine, const char* elements,
+//                                       envoy_stats_tags tags, uint64_t value,
+//                                       envoy_histogram_stat_unit_t unit_measure);
+
+// /**
+//  * Statically register APIs leveraging platform libraries.
+//  * Warning: Must be completed before any calls to run_engine().
+//  * @param name, identifier of the platform API
+//  * @param api, type-erased c struct containing function pointers and context.
+//  * @return envoy_status_t, the resulting status of the operation.
+//  */
+// envoy_status_t register_platform_api(const char* name, void* api);
+
+// #ifdef __cplusplus
+// } // functions
+// #endif
