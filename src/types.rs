@@ -89,7 +89,6 @@ impl Engine {
         unsafe {
             handle = sys::init_stream(self.0);
         }
-	println!("<<< {:?} >>>", handle);
         StreamPrototype::new(handle)
     }
 
@@ -178,8 +177,7 @@ struct Stream<'a> {
 
 impl<'a> Stream<'a> {
     fn send_headers<T: Into<Headers>>(&mut self, headers: T, end_stream: bool) {
-	let headers = headers.into();
-	println!("{:?}", headers);
+        let headers = headers.into();
         let envoy_headers = headers.into_envoy_map();
         unsafe {
             sys::send_headers(self.handle, envoy_headers, end_stream);
@@ -363,8 +361,8 @@ struct Data(Vec<u8>);
 
 impl<S: AsRef<str>> From<S> for Data {
     fn from(string: S) -> Self {
-	let string = string.as_ref().to_owned();
-	Self(Vec::from_iter(string.into_bytes()))
+        let string = string.as_ref().to_owned();
+        Self(Vec::from_iter(string.into_bytes()))
     }
 }
 
@@ -396,9 +394,9 @@ impl Data {
         let ptr = vec.as_mut_ptr();
         let length = vec.len();
 
-	// TODO: this is leaking memory!
-	// make it so we keep around the pointer to the vector
-	// and can therefore release it later
+        // TODO: this is leaking memory!
+        // make it so we keep around the pointer to the vector
+        // and can therefore release it later
         sys::envoy_data {
             length: length.try_into().unwrap(),
             bytes: ptr,
@@ -419,7 +417,7 @@ struct MapEntry {
 }
 
 impl MapEntry {
-    unsafe fn from_envoy_map_no_release(envoy_map_entry: &sys::envoy_map_entry) -> Self {
+    unsafe fn from_envoy_map_entry_no_release(envoy_map_entry: &sys::envoy_map_entry) -> Self {
         let key_data = Data::from_envoy_data_no_release(&envoy_map_entry.key);
         let value_data = Data::from_envoy_data_no_release(&envoy_map_entry.value);
         Self {
@@ -447,7 +445,7 @@ impl Map {
         let mut entries = Vec::with_capacity(length);
         for i in 0..length {
             let entry = &*envoy_map.entries.add(i);
-            entries.push(MapEntry::from_envoy_map_no_release(entry));
+            entries.push(MapEntry::from_envoy_map_entry_no_release(entry));
         }
         sys::release_envoy_map(envoy_map);
         Self { entries }
@@ -459,6 +457,7 @@ impl Map {
             envoy_map_entries.push(entry.into_envoy_map_entry());
         }
 
+        let mut envoy_map_entries = mem::ManuallyDrop::new(envoy_map_entries);
         let ptr = envoy_map_entries.as_mut_ptr();
         let length = envoy_map_entries.len();
         sys::envoy_map {
@@ -473,8 +472,8 @@ impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
         let mut entries = Vec::with_capacity(pairs.len());
         for (key, value) in pairs.into_iter() {
             entries.push(MapEntry {
-		key: Data::from(key),
-		value: Data::from(value),
+                key: Data::from(key),
+                value: Data::from(value),
             });
         }
         Map { entries }
@@ -900,30 +899,30 @@ mod tests {
 
     #[test]
     fn test_data_lifecycle() {
-	let data = Data::from("hello world");
-	let expected_contents = data.0.clone();
+        let data = Data::from("hello world");
+        let expected_contents = data.0.clone();
 
-	let converted_data;
-	unsafe {
-	    converted_data = Data::from_envoy_data(data.into_envoy_data());
-	}
-	let contents = converted_data.0;
+        let converted_data;
+        unsafe {
+            converted_data = Data::from_envoy_data(data.into_envoy_data());
+        }
+        let contents = converted_data.0;
 
-	assert_eq!(contents, expected_contents);
+        assert_eq!(contents, expected_contents);
     }
 
     #[test]
     fn test_map_lifecycle() {
-	let map = Map::from(vec![("hello", "world")]);
-	let expected_contents = map.entries.clone();
+        let map = Map::from(vec![("hello", "world")]);
+        let expected_contents = map.entries.clone();
 
-	let converted_map;
-	unsafe {
-	    converted_map = Map::from_envoy_map(map.into_envoy_map());
-	}
-	let contents = converted_map.entries;
+        let converted_map;
+        unsafe {
+            converted_map = Map::from_envoy_map(map.into_envoy_map());
+        }
+        let contents = converted_map.entries;
 
-	assert_eq!(contents, expected_contents);
+        assert_eq!(contents, expected_contents);
     }
 
     #[test]
@@ -937,15 +936,26 @@ mod tests {
     fn test_stream_lifecycle() {
         let (engine, engine_terminated) = make_engine();
 
+        let stream_complete = Arc::new(Event::new());
         let mut stream = engine
-	    .new_stream()
-	    .with_on_headers(Box::new(|headers: Map, end_stream: bool, stream_intel: StreamIntel| {
-		println!("headers {:?} {:?} {:?}", headers, end_stream, stream_intel);
-	    }))
-	    .with_on_data(Box::new(|data: Data, end_stream: bool, stream_intel: StreamIntel| {
-		println!("data: {:?} {:?} {:?}", data, end_stream, stream_intel);
-	    }))
-	    .start(false);
+            .new_stream()
+            .with_on_error(Box::new(move |error: Error, _| {
+                // TODO: fail this test more gracefully :)
+                panic!("{:?}", error);
+            }))
+            .with_on_complete({
+                let stream_complete = stream_complete.clone();
+                Box::new(move |_| {
+                    stream_complete.set();
+                })
+            })
+            .with_on_cancel({
+                let stream_complete = stream_complete.clone();
+                Box::new(move |_| {
+                    stream_complete.set();
+                })
+            })
+            .start(false);
         stream.send_headers(
             vec![
                 (":method", "GET"),
@@ -955,6 +965,7 @@ mod tests {
             ],
             true,
         );
+        stream_complete.wait();
         // TODO: do something with the stream
 
         engine.terminate();
