@@ -9,6 +9,9 @@ use crate::sys;
 
 // some things i don't like and want to work on
 //
+// - decide what the public API should be
+//   and make those things public
+//
 // - callbacks need to be wrapped in boxes all the time
 //   look to see if there's a good way to represent them statically
 //
