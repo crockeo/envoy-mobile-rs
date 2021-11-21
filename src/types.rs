@@ -591,6 +591,12 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+	let http_callbacks = context as *const HTTPCallbacks;
+	let data = Data::from_envoy_data(envoy_data);
+	let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+	if let Some(on_data) = &(*http_callbacks).on_data {
+	    on_data(data, end_stream, stream_intel);
+	}
         context
     }
 
@@ -599,6 +605,12 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const HTTPCallbacks;
+        let metadata = Headers::from_envoy_map(envoy_metadata);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_metadata) = &(*http_callbacks).on_metadata {
+            on_metadata(metadata, stream_intel);
+        }
         context
     }
 
@@ -607,6 +619,12 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const HTTPCallbacks;
+        let trailers = Headers::from_envoy_map(envoy_trailers);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_trailers) = &(*http_callbacks).on_trailers {
+            on_trailers(trailers, stream_intel);
+        }
         context
     }
 
@@ -615,6 +633,12 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const HTTPCallbacks;
+	let error = Error::from_envoy_error(envoy_error);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_error) = &(*http_callbacks).on_error {
+            on_error(error, stream_intel);
+        }
         context
     }
 
@@ -622,6 +646,11 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const HTTPCallbacks;
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_complete) = &(*http_callbacks).on_complete {
+            on_complete(stream_intel);
+        }
         context
     }
 
@@ -629,6 +658,11 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const HTTPCallbacks;
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_cancel) = &(*http_callbacks).on_cancel {
+            on_cancel(stream_intel);
+        }
         context
     }
 
@@ -636,6 +670,11 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const HTTPCallbacks;
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_send_window_available) = &(*http_callbacks).on_send_window_available {
+            on_send_window_available(stream_intel);
+        }
         context
     }
 }
