@@ -1,6 +1,8 @@
 mod bridge;
 mod sys;
 
+use bridge::*;
+
 #[cfg(test)]
 mod tests {
     #[test]

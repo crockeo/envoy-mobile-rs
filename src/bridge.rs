@@ -9,9 +9,6 @@ use crate::sys;
 
 // some things i don't like and want to work on
 //
-// - decide what the public API should be
-//   and make those things public
-//
 // - callbacks need to be wrapped in boxes all the time
 //   look to see if there's a good way to represent them statically
 //
@@ -23,15 +20,17 @@ use crate::sys;
 //
 // - extend the lifetime of data passed across program boundaries
 //   a la string views
+//
+// - config loading and parametrization with the engine builder
 
-struct EngineBuilder {
+pub struct EngineBuilder {
     engine_callbacks: EngineCallbacks,
     logger: Logger,
     event_tracker: EventTracker,
 }
 
 impl EngineBuilder {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             engine_callbacks: EngineCallbacks::default(),
             logger: Logger::default(),
@@ -39,27 +38,27 @@ impl EngineBuilder {
         }
     }
 
-    fn with_on_engine_running(mut self, on_engine_running: OnEngineRunning) -> Self {
+    pub fn with_on_engine_running(mut self, on_engine_running: OnEngineRunning) -> Self {
         self.engine_callbacks.on_engine_running = Some(on_engine_running);
         self
     }
 
-    fn with_on_exit(mut self, on_exit: OnExit) -> Self {
+    pub fn with_on_exit(mut self, on_exit: OnExit) -> Self {
         self.engine_callbacks.on_exit = Some(on_exit);
         self
     }
 
-    fn with_log(mut self, log: LoggerLog) -> Self {
+    pub fn with_log(mut self, log: LoggerLog) -> Self {
         self.logger.log = Some(log);
         self
     }
 
-    fn with_track(mut self, track: EventTrackerTrack) -> Self {
+    pub fn with_track(mut self, track: EventTrackerTrack) -> Self {
         self.event_tracker.track = Some(track);
         self
     }
 
-    fn build<S: AsRef<str>>(self, config: S, log_level: LogLevel) -> Engine {
+    pub fn build<S: AsRef<str>>(self, config: S, log_level: LogLevel) -> Engine {
         let envoy_callbacks = self.engine_callbacks.into_envoy_engine_callbacks();
         let envoy_logger = self.logger.into_envoy_logger();
         let envoy_event_tracker = self.event_tracker.into_envoy_event_tracker();
@@ -69,7 +68,7 @@ impl EngineBuilder {
         }
 
         let config = ffi::CString::new(config.as_ref()).unwrap();
-        let log_level = ffi::CString::new(log_level.as_envoy_log_level()).unwrap();
+        let log_level = ffi::CString::new(log_level.into_envoy_log_level()).unwrap();
         unsafe {
             // TODO: actually use the above config once i have config loading set up
             sys::run_engine(handle, sys::config_template, log_level.into_raw());
@@ -78,12 +77,10 @@ impl EngineBuilder {
     }
 }
 
-struct Engine(isize);
+pub struct Engine(isize);
 
 impl Engine {
-    // TODO: change the way this is returned to limit
-    // the lifetime of the Stream to the lifetime of the Engine
-    fn new_stream<'a>(&'a self) -> StreamPrototype<'a> {
+    pub fn new_stream<'a>(&'a self) -> StreamPrototype<'a> {
         let handle;
         unsafe {
             handle = sys::init_stream(self.0);
@@ -91,8 +88,8 @@ impl Engine {
         StreamPrototype::new(handle)
     }
 
-    fn record_counter_inc<S: AsRef<str>>(&self, elements: S, tags: StatsTags, count: usize) {
-	let bytes = Vec::from_iter(elements.as_ref().bytes());
+    pub fn record_counter_inc<S: AsRef<str>>(&self, elements: S, tags: StatsTags, count: usize) {
+        let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
         let envoy_stats_tags = tags.into_envoy_map();
@@ -106,8 +103,8 @@ impl Engine {
         }
     }
 
-    fn record_gauge_set<S: AsRef<str>>(&self, elements: S, tags: StatsTags, value: usize) {
-	let bytes = Vec::from_iter(elements.as_ref().bytes());
+    pub fn record_gauge_set<S: AsRef<str>>(&self, elements: S, tags: StatsTags, value: usize) {
+        let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
         let envoy_stats_tags = tags.into_envoy_map();
@@ -116,13 +113,13 @@ impl Engine {
                 self.0,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
-		value.try_into().unwrap(),
+                value.try_into().unwrap(),
             );
         }
     }
 
-    fn record_gauge_add<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
-	let bytes = Vec::from_iter(elements.as_ref().bytes());
+    pub fn record_gauge_add<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+        let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
         let envoy_stats_tags = tags.into_envoy_map();
@@ -131,13 +128,13 @@ impl Engine {
                 self.0,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
-		amount.try_into().unwrap(),
+                amount.try_into().unwrap(),
             );
         }
     }
 
-    fn record_gauge_sub<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
-	let bytes = Vec::from_iter(elements.as_ref().bytes());
+    pub fn record_gauge_sub<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+        let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
         let envoy_stats_tags = tags.into_envoy_map();
@@ -146,35 +143,41 @@ impl Engine {
                 self.0,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
-		amount.try_into().unwrap(),
+                amount.try_into().unwrap(),
             );
         }
     }
 
-    fn record_histogram_value<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize, unit_measure: HistogramStatUnit) {
-	let bytes = Vec::from_iter(elements.as_ref().bytes());
+    pub fn record_histogram_value<S: AsRef<str>>(
+        &self,
+        elements: S,
+        tags: StatsTags,
+        amount: usize,
+        unit_measure: HistogramStatUnit,
+    ) {
+        let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
         let envoy_stats_tags = tags.into_envoy_map();
-	let envoy_histogram_stat_unit = unit_measure.into_envoy_histogram_stat_unit();
+        let envoy_histogram_stat_unit = unit_measure.into_envoy_histogram_stat_unit();
         unsafe {
             sys::record_histogram_value(
                 self.0,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
-		amount.try_into().unwrap(),
-		envoy_histogram_stat_unit,
+                amount.try_into().unwrap(),
+                envoy_histogram_stat_unit,
             );
         }
     }
 
-    fn flush_stats(&self) {
+    pub fn flush_stats(&self) {
         unsafe {
             sys::flush_stats(self.0);
         }
     }
 
-    fn dump_stats(&self) -> Data {
+    pub fn dump_stats(&self) -> Data {
         let mut envoy_data;
         unsafe {
             envoy_data = sys::envoy_nodata;
@@ -186,7 +189,7 @@ impl Engine {
         }
     }
 
-    fn terminate(self) {
+    pub fn terminate(self) {
         unsafe {
             sys::drain_connections(self.0);
             sys::terminate_engine(self.0);
@@ -194,7 +197,7 @@ impl Engine {
     }
 }
 
-struct StreamPrototype<'a> {
+pub struct StreamPrototype<'a> {
     handle: isize,
     http_callbacks: HTTPCallbacks,
     _lifetime: PhantomData<&'a ()>,
@@ -209,42 +212,42 @@ impl<'a> StreamPrototype<'a> {
         }
     }
 
-    fn with_on_headers(mut self, on_headers: OnHeaders) -> Self {
+    pub fn with_on_headers(mut self, on_headers: OnHeaders) -> Self {
         self.http_callbacks.on_headers = Some(on_headers);
         self
     }
 
-    fn with_on_data(mut self, on_data: OnData) -> Self {
+    pub fn with_on_data(mut self, on_data: OnData) -> Self {
         self.http_callbacks.on_data = Some(on_data);
         self
     }
 
-    fn with_on_metadata(mut self, on_metadata: OnMetadata) -> Self {
+    pub fn with_on_metadata(mut self, on_metadata: OnMetadata) -> Self {
         self.http_callbacks.on_metadata = Some(on_metadata);
         self
     }
 
-    fn with_on_trailers(mut self, on_trailers: OnTrailers) -> Self {
+    pub fn with_on_trailers(mut self, on_trailers: OnTrailers) -> Self {
         self.http_callbacks.on_trailers = Some(on_trailers);
         self
     }
 
-    fn with_on_error(mut self, on_error: OnError) -> Self {
+    pub fn with_on_error(mut self, on_error: OnError) -> Self {
         self.http_callbacks.on_error = Some(on_error);
         self
     }
 
-    fn with_on_complete(mut self, on_complete: OnComplete) -> Self {
+    pub fn with_on_complete(mut self, on_complete: OnComplete) -> Self {
         self.http_callbacks.on_complete = Some(on_complete);
         self
     }
 
-    fn with_on_cancel(mut self, on_cancel: OnCancel) -> Self {
+    pub fn with_on_cancel(mut self, on_cancel: OnCancel) -> Self {
         self.http_callbacks.on_cancel = Some(on_cancel);
         self
     }
 
-    fn with_on_send_window_available(
+    pub fn with_on_send_window_available(
         mut self,
         on_send_window_available: OnSendWindowAvailable,
     ) -> Self {
@@ -252,7 +255,7 @@ impl<'a> StreamPrototype<'a> {
         self
     }
 
-    fn start(self, explicit_flow_control: bool) -> Stream<'a> {
+    pub fn start(self, explicit_flow_control: bool) -> Stream<'a> {
         let envoy_http_callbacks = self.http_callbacks.into_envoy_http_callbacks();
         unsafe {
             sys::start_stream(self.handle, envoy_http_callbacks, explicit_flow_control);
@@ -264,13 +267,13 @@ impl<'a> StreamPrototype<'a> {
     }
 }
 
-struct Stream<'a> {
+pub struct Stream<'a> {
     handle: isize,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Stream<'a> {
-    fn send_headers<T: Into<Headers>>(&mut self, headers: T, end_stream: bool) {
+    pub fn send_headers<T: Into<Headers>>(&mut self, headers: T, end_stream: bool) {
         let headers = headers.into();
         let envoy_headers = headers.into_envoy_map();
         unsafe {
@@ -278,34 +281,28 @@ impl<'a> Stream<'a> {
         }
     }
 
-    fn send_data<T: Into<Data>>(&mut self, data: T, end_stream: bool) {
+    pub fn send_data<T: Into<Data>>(&mut self, data: T, end_stream: bool) {
         let envoy_data = data.into().into_envoy_data();
         unsafe {
             sys::send_data(self.handle, envoy_data, end_stream);
         }
     }
 
-    fn send_metadata<T: Into<Headers>>(&mut self, metadata: T) {
+    pub fn send_metadata<T: Into<Headers>>(&mut self, metadata: T) {
         let envoy_metadata = metadata.into().into_envoy_map();
         unsafe {
             sys::send_metadata(self.handle, envoy_metadata);
         }
     }
 
-    fn send_trailers<T: Into<Headers>>(&mut self, trailers: T) {
+    pub fn send_trailers<T: Into<Headers>>(&mut self, trailers: T) {
         let envoy_trailers = trailers.into().into_envoy_map();
         unsafe {
             sys::send_trailers(self.handle, envoy_trailers);
         }
     }
 
-    fn reset_stream(self) {
-        unsafe {
-            sys::reset_stream(self.handle);
-        }
-    }
-
-    fn read_data(&mut self, bytes_to_read: usize) {
+    pub fn read_data(&mut self, bytes_to_read: usize) {
         // TODO: make this error if we're not
         // in explicit flow control mode?
         // or BETTER YET
@@ -315,9 +312,15 @@ impl<'a> Stream<'a> {
             sys::read_data(self.handle, bytes_to_read.try_into().unwrap());
         }
     }
+
+    pub fn reset_stream(self) {
+        unsafe {
+            sys::reset_stream(self.handle);
+        }
+    }
 }
 
-enum LogLevel {
+pub enum LogLevel {
     Trace,
     Debug,
     Info,
@@ -328,7 +331,7 @@ enum LogLevel {
 }
 
 impl LogLevel {
-    fn as_envoy_log_level(&self) -> &'static str {
+    fn into_envoy_log_level(self) -> &'static str {
         match self {
             LogLevel::Trace => "trace",
             LogLevel::Debug => "debug",
@@ -350,8 +353,7 @@ impl Status {
     fn from_envoy_status(envoy_status: sys::envoy_status_t) -> Self {
         match envoy_status {
             0 => Status::Success,
-            1 => Status::Failure,
-            _ => panic!(),
+            _ => Status::Failure,
         }
     }
 
@@ -363,7 +365,7 @@ impl Status {
     }
 }
 
-enum HistogramStatUnit {
+pub enum HistogramStatUnit {
     Unspecified,
     Bytes,
     Microseconds,
@@ -371,18 +373,6 @@ enum HistogramStatUnit {
 }
 
 impl HistogramStatUnit {
-    fn from_envoy_histogram_stat_unit(
-        envoy_histogram_stat_unit: sys::envoy_histogram_stat_unit_t,
-    ) -> Self {
-        match envoy_histogram_stat_unit {
-            0 => HistogramStatUnit::Unspecified,
-            1 => HistogramStatUnit::Bytes,
-            2 => HistogramStatUnit::Microseconds,
-            3 => HistogramStatUnit::Milliseconds,
-            _ => panic!(),
-        }
-    }
-
     fn into_envoy_histogram_stat_unit(self) -> sys::envoy_histogram_stat_unit_t {
         match self {
             HistogramStatUnit::Unspecified => 0,
@@ -394,7 +384,7 @@ impl HistogramStatUnit {
 }
 
 #[derive(Debug)]
-enum ErrorCode {
+pub enum ErrorCode {
     UndefinedError,
     StreamReset,
     ConnectionFailure,
@@ -413,34 +403,15 @@ impl ErrorCode {
             _ => panic!(),
         }
     }
-
-    fn to_envoy_error_code(self) -> sys::envoy_error_code_t {
-        match self {
-            ErrorCode::UndefinedError => 0,
-            ErrorCode::StreamReset => 1,
-            ErrorCode::ConnectionFailure => 2,
-            ErrorCode::BufferLimitExceeded => 3,
-            ErrorCode::RequestTimeout => 4,
-        }
-    }
 }
 
-enum Network {
+pub enum Network {
     Generic,
     WLAN,
     WWAN,
 }
 
 impl Network {
-    fn from_envoy_network(envoy_network: sys::envoy_network_t) -> Self {
-        match envoy_network {
-            0 => Network::Generic,
-            1 => Network::WLAN,
-            2 => Network::WWAN,
-            _ => panic!(),
-        }
-    }
-
     fn into_envoy_network(self) -> sys::envoy_network_t {
         match self {
             Network::Generic => 0,
@@ -451,7 +422,7 @@ impl Network {
 }
 
 #[derive(Eq, Clone, Debug, PartialEq)]
-struct Data(Vec<u8>);
+pub struct Data(Vec<u8>);
 
 impl<S: AsRef<str>> From<S> for Data {
     fn from(string: S) -> Self {
@@ -460,11 +431,11 @@ impl<S: AsRef<str>> From<S> for Data {
     }
 }
 
-impl TryInto<String> for Data {
-    type Error = ();
+impl TryFrom<Data> for String {
+    type Error = FromUtf8Error;
 
-    fn try_into(self) -> Result<String, Self::Error> {
-        Ok(String::from_utf8(self.0).unwrap())
+    fn try_from(data: Data) -> Result<String, Self::Error> {
+        String::from_utf8(data.0)
     }
 }
 
@@ -498,39 +469,22 @@ impl Data {
             context: ptr::null_mut(),
         }
     }
-
-    fn into_string(self) -> Result<String, FromUtf8Error> {
-        String::from_utf8(self.0)
-    }
-}
-
-#[derive(Eq, Clone, Debug, PartialEq)]
-struct MapEntry {
-    key: Data,
-    value: Data,
-}
-
-impl MapEntry {
-    unsafe fn from_envoy_map_entry_no_release(envoy_map_entry: &sys::envoy_map_entry) -> Self {
-        let key_data = Data::from_envoy_data_no_release(&envoy_map_entry.key);
-        let value_data = Data::from_envoy_data_no_release(&envoy_map_entry.value);
-        Self {
-            key: key_data,
-            value: value_data,
-        }
-    }
-
-    fn into_envoy_map_entry(self) -> sys::envoy_map_entry {
-        sys::envoy_map_entry {
-            key: self.key.into_envoy_data(),
-            value: self.value.into_envoy_data(),
-        }
-    }
 }
 
 #[derive(Debug)]
-struct Map {
-    entries: Vec<MapEntry>,
+pub struct Map(Vec<(Data, Data)>);
+
+impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
+    fn from(pairs: Vec<(S, S)>) -> Self {
+        let mut entries = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs.into_iter() {
+            entries.push((
+                Data::from(key),
+                Data::from(value),
+            ));
+        }
+        Map(entries)
+    }
 }
 
 impl Map {
@@ -539,16 +493,22 @@ impl Map {
         let mut entries = Vec::with_capacity(length);
         for i in 0..length {
             let entry = &*envoy_map.entries.add(i);
-            entries.push(MapEntry::from_envoy_map_entry_no_release(entry));
+	    entries.push((
+		Data::from_envoy_data_no_release(&entry.key),
+		Data::from_envoy_data_no_release(&entry.value),
+	    ));
         }
         sys::release_envoy_map(envoy_map);
-        Self { entries }
+        Self(entries)
     }
 
     fn into_envoy_map(self) -> sys::envoy_map {
-        let mut envoy_map_entries = Vec::with_capacity(self.entries.len());
-        for entry in self.entries.into_iter() {
-            envoy_map_entries.push(entry.into_envoy_map_entry());
+        let mut envoy_map_entries = Vec::with_capacity(self.0.len());
+        for entry in self.0.into_iter() {
+	    envoy_map_entries.push(sys::envoy_map_entry {
+		key: entry.0.into_envoy_data(),
+		value: entry.1.into_envoy_data(),
+	    });
         }
 
         let mut envoy_map_entries = mem::ManuallyDrop::new(envoy_map_entries);
@@ -561,24 +521,11 @@ impl Map {
     }
 }
 
-impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
-    fn from(pairs: Vec<(S, S)>) -> Self {
-        let mut entries = Vec::with_capacity(pairs.len());
-        for (key, value) in pairs.into_iter() {
-            entries.push(MapEntry {
-                key: Data::from(key),
-                value: Data::from(value),
-            });
-        }
-        Map { entries }
-    }
-}
-
-type Headers = Map;
-type StatsTags = Map;
+pub type Headers = Map;
+pub type StatsTags = Map;
 
 #[derive(Debug)]
-struct Error {
+pub struct Error {
     error_code: ErrorCode,
     message: Data,
     attempt_count: i32,
@@ -597,7 +544,7 @@ impl Error {
 }
 
 #[derive(Debug)]
-struct StreamIntel {
+pub struct StreamIntel {
     stream_id: i64,
     connection_id: i64,
     attempt_count: u64,
@@ -613,14 +560,14 @@ impl StreamIntel {
     }
 }
 
-type OnHeaders = Box<dyn Fn(Headers, bool, StreamIntel)>;
-type OnData = Box<dyn Fn(Data, bool, StreamIntel)>;
-type OnMetadata = Box<dyn Fn(Headers, StreamIntel)>;
-type OnTrailers = Box<dyn Fn(Headers, StreamIntel)>;
-type OnError = Box<dyn Fn(Error, StreamIntel)>;
-type OnComplete = Box<dyn Fn(StreamIntel)>;
-type OnCancel = Box<dyn Fn(StreamIntel)>;
-type OnSendWindowAvailable = Box<dyn Fn(StreamIntel)>;
+pub type OnHeaders = Box<dyn Fn(Headers, bool, StreamIntel)>;
+pub type OnData = Box<dyn Fn(Data, bool, StreamIntel)>;
+pub type OnMetadata = Box<dyn Fn(Headers, StreamIntel)>;
+pub type OnTrailers = Box<dyn Fn(Headers, StreamIntel)>;
+pub type OnError = Box<dyn Fn(Error, StreamIntel)>;
+pub type OnComplete = Box<dyn Fn(StreamIntel)>;
+pub type OnCancel = Box<dyn Fn(StreamIntel)>;
+pub type OnSendWindowAvailable = Box<dyn Fn(StreamIntel)>;
 
 struct HTTPCallbacks {
     on_headers: Option<OnHeaders>,
@@ -773,8 +720,8 @@ impl HTTPCallbacks {
     }
 }
 
-type OnEngineRunning = Box<dyn Fn()>;
-type OnExit = Box<dyn Fn()>;
+pub type OnEngineRunning = Box<dyn Fn()>;
+pub type OnExit = Box<dyn Fn()>;
 
 struct EngineCallbacks {
     on_engine_running: Option<OnEngineRunning>,
@@ -815,7 +762,7 @@ impl EngineCallbacks {
     }
 }
 
-type LoggerLog = Box<dyn Fn(Data)>;
+pub type LoggerLog = Box<dyn Fn(Data)>;
 
 struct Logger {
     log: Option<LoggerLog>,
@@ -850,7 +797,7 @@ impl Logger {
     }
 }
 
-type EventTrackerTrack = Box<dyn Fn(Map)>;
+pub type EventTrackerTrack = Box<dyn Fn(Map)>;
 
 struct EventTracker {
     track: Option<EventTrackerTrack>,
@@ -877,6 +824,12 @@ impl EventTracker {
         if let Some(track) = &(*event_tracker).track {
             track(event);
         }
+    }
+}
+
+pub fn set_preferred_network(network: Network) {
+    unsafe {
+        sys::set_preferred_network(network.into_envoy_network());
     }
 }
 
@@ -931,7 +884,7 @@ mod tests {
                     engine_terminated.set();
                 }))
                 .with_log(Box::new(|data| {
-                    print!("{}", data.into_string().unwrap());
+                    print!("{}", String::try_from(data).unwrap());
                 }))
                 .build("", LogLevel::Debug)
         };
@@ -957,13 +910,13 @@ mod tests {
     #[test]
     fn test_map_lifecycle() {
         let map = Map::from(vec![("hello", "world")]);
-        let expected_contents = map.entries.clone();
+        let expected_contents = map.0.clone();
 
         let converted_map;
         unsafe {
             converted_map = Map::from_envoy_map(map.into_envoy_map());
         }
-        let contents = converted_map.entries;
+        let contents = converted_map.0;
 
         assert_eq!(contents, expected_contents);
     }
@@ -1013,11 +966,5 @@ mod tests {
 
         engine.terminate();
         engine_terminated.wait();
-    }
-}
-
-fn set_preferred_network(network: Network) {
-    unsafe {
-        sys::set_preferred_network(network.into_envoy_network());
     }
 }
