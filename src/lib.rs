@@ -1,5 +1,5 @@
+mod bridge;
 mod sys;
-mod types;
 
 #[cfg(test)]
 mod tests {

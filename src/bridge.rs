@@ -1,7 +1,3 @@
-// we have a lot of todo!()s laying around,
-// so unreachable code adds a lot of visual noise
-#![allow(unreachable_code)]
-
 use std::alloc;
 use std::ffi;
 use std::marker::PhantomData;
@@ -92,19 +88,99 @@ impl Engine {
         StreamPrototype::new(handle)
     }
 
+    fn record_counter_inc<S: AsRef<str>>(&self, elements: S, tags: StatsTags, count: usize) {
+	let bytes = Vec::from_iter(elements.as_ref().bytes());
+        let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
+
+        let envoy_stats_tags = tags.into_envoy_map();
+        unsafe {
+            sys::record_counter_inc(
+                self.0,
+                elements_cstr.as_ptr(),
+                envoy_stats_tags,
+                count.try_into().unwrap(),
+            );
+        }
+    }
+
+    fn record_gauge_set<S: AsRef<str>>(&self, elements: S, tags: StatsTags, value: usize) {
+	let bytes = Vec::from_iter(elements.as_ref().bytes());
+        let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
+
+        let envoy_stats_tags = tags.into_envoy_map();
+        unsafe {
+            sys::record_gauge_set(
+                self.0,
+                elements_cstr.as_ptr(),
+                envoy_stats_tags,
+		value.try_into().unwrap(),
+            );
+        }
+    }
+
+    fn record_gauge_add<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+	let bytes = Vec::from_iter(elements.as_ref().bytes());
+        let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
+
+        let envoy_stats_tags = tags.into_envoy_map();
+        unsafe {
+            sys::record_gauge_add(
+                self.0,
+                elements_cstr.as_ptr(),
+                envoy_stats_tags,
+		amount.try_into().unwrap(),
+            );
+        }
+    }
+
+    fn record_gauge_sub<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+	let bytes = Vec::from_iter(elements.as_ref().bytes());
+        let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
+
+        let envoy_stats_tags = tags.into_envoy_map();
+        unsafe {
+            sys::record_gauge_sub(
+                self.0,
+                elements_cstr.as_ptr(),
+                envoy_stats_tags,
+		amount.try_into().unwrap(),
+            );
+        }
+    }
+
+    fn record_histogram_value<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize, unit_measure: HistogramStatUnit) {
+	let bytes = Vec::from_iter(elements.as_ref().bytes());
+        let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
+
+        let envoy_stats_tags = tags.into_envoy_map();
+	let envoy_histogram_stat_unit = unit_measure.into_envoy_histogram_stat_unit();
+        unsafe {
+            sys::record_histogram_value(
+                self.0,
+                elements_cstr.as_ptr(),
+                envoy_stats_tags,
+		amount.try_into().unwrap(),
+		envoy_histogram_stat_unit,
+            );
+        }
+    }
+
     fn flush_stats(&self) {
-	unsafe {
-	    sys::flush_stats(self.0);
-	}
+        unsafe {
+            sys::flush_stats(self.0);
+        }
     }
 
     fn dump_stats(&self) -> Data {
-	let mut envoy_data;
-	unsafe {
-	    envoy_data = sys::envoy_nodata;
-	    sys::dump_stats(self.0, &envoy_data as *const sys::envoy_data as *mut sys::envoy_data);
-	    Data::from_envoy_data(envoy_data)
-	}
+        let mut envoy_data;
+        unsafe {
+            envoy_data = sys::envoy_nodata;
+            sys::dump_stats(
+                self.0,
+                &envoy_data as *const sys::envoy_data as *mut sys::envoy_data,
+            );
+            Data::from_envoy_data(envoy_data)
+        }
     }
 
     fn terminate(self) {
@@ -304,7 +380,7 @@ impl HistogramStatUnit {
         }
     }
 
-    fn to_envoy_histogram_stat_unit(self) -> sys::envoy_histogram_stat_unit_t {
+    fn into_envoy_histogram_stat_unit(self) -> sys::envoy_histogram_stat_unit_t {
         match self {
             HistogramStatUnit::Unspecified => 0,
             HistogramStatUnit::Bytes => 1,
@@ -362,7 +438,7 @@ impl Network {
         }
     }
 
-    fn to_envoy_network(self) -> sys::envoy_network_t {
+    fn into_envoy_network(self) -> sys::envoy_network_t {
         match self {
             Network::Generic => 0,
             Network::WLAN => 1,
@@ -606,12 +682,12 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-	let http_callbacks = context as *const HTTPCallbacks;
-	let data = Data::from_envoy_data(envoy_data);
-	let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-	if let Some(on_data) = &(*http_callbacks).on_data {
-	    on_data(data, end_stream, stream_intel);
-	}
+        let http_callbacks = context as *const HTTPCallbacks;
+        let data = Data::from_envoy_data(envoy_data);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_data) = &(*http_callbacks).on_data {
+            on_data(data, end_stream, stream_intel);
+        }
         context
     }
 
@@ -649,7 +725,7 @@ impl HTTPCallbacks {
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
         let http_callbacks = context as *const HTTPCallbacks;
-	let error = Error::from_envoy_error(envoy_error);
+        let error = Error::from_envoy_error(envoy_error);
         let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
         if let Some(on_error) = &(*http_callbacks).on_error {
             on_error(error, stream_intel);
@@ -937,78 +1013,8 @@ mod tests {
     }
 }
 
-// TODO: implement remaining functions at some point(tm)
-
-// /**
-//  * Update the network interface to the preferred network for opening new streams.
-//  * Note that this state is shared by all engines.
-//  * @param network, the network to be preferred for new streams.
-//  * @return envoy_status_t, the resulting status of the operation.
-//  */
-// envoy_status_t set_preferred_network(envoy_network_t network);
-
-// /**
-//  * Increment a counter with the given elements and by the given count.
-//  * @param engine, the engine that owns the counter.
-//  * @param elements, the string that identifies the counter to increment.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param count, the count to increment by.
-//  */
-// envoy_status_t record_counter_inc(envoy_engine_t, const char* elements, envoy_stats_tags tags,
-//                                   uint64_t count);
-
-// /**
-//  * Set a gauge of a given string of elements with the given value.
-//  * @param engine, the engine that owns the gauge.
-//  * @param elements, the string that identifies the gauge to set value with.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param value, the value to set to the gauge.
-//  */
-// envoy_status_t record_gauge_set(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
-//                                 uint64_t value);
-
-// /**
-//  * Add the gauge with the given string of elements and by the given amount.
-//  * @param engine, the engine that owns the gauge.
-//  * @param elements, the string that identifies the gauge to add to.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param amount, the amount to add to the gauge.
-//  */
-// envoy_status_t record_gauge_add(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
-//                                 uint64_t amount);
-
-// /**
-//  * Subtract from the gauge with the given string of elements and by the given amount.
-//  * @param engine, the engine that owns the gauge.
-//  * @param elements, the string that identifies the gauge to subtract from.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param amount, amount to subtract from the gauge.
-//  */
-// envoy_status_t record_gauge_sub(envoy_engine_t engine, const char* elements, envoy_stats_tags tags,
-//                                 uint64_t amount);
-
-// /**
-//  * Add another recorded amount to the histogram with the given string of elements and unit
-//  * measurement.
-//  * @param engine, the engine that owns the histogram.
-//  * @param elements, the string that identifies the histogram to subtract from.
-//  * @param tags, a map of {key, value} pairs of tags.
-//  * @param value, amount to record as a new value for the histogram distribution.
-//  * @param unit_measure, the unit of measurement (e.g. milliseconds, bytes, etc.)
-//  */
-// envoy_status_t record_histogram_value(envoy_engine_t engine, const char* elements,
-//                                       envoy_stats_tags tags, uint64_t value,
-//                                       envoy_histogram_stat_unit_t unit_measure);
-
-// /**
-//  * Statically register APIs leveraging platform libraries.
-//  * Warning: Must be completed before any calls to run_engine().
-//  * @param name, identifier of the platform API
-//  * @param api, type-erased c struct containing function pointers and context.
-//  * @return envoy_status_t, the resulting status of the operation.
-//  */
-// envoy_status_t register_platform_api(const char* name, void* api);
-
-// #ifdef __cplusplus
-// } // functions
-// #endif
+fn set_preferred_network(network: Network) {
+    unsafe {
+        sys::set_preferred_network(network.into_envoy_network());
+    }
+}
