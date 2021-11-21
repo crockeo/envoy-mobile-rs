@@ -59,15 +59,12 @@ struct RunningEngine(isize);
 impl RunningEngine {
     // TODO: change the way this is returned to limit
     // the lifetime of the Stream to the lifetime of the RunningEngine
-    fn new_stream<'a>(&'a self) -> Stream<'a> {
-	let handle;
-	unsafe {
-	    handle = sys::init_stream(self.0);
-	}
-	Stream {
-	    handle,
-	    _lifetime: PhantomData,
-	}
+    fn new_stream<'a>(&'a self) -> StreamPrototype<'a> {
+        let handle;
+        unsafe {
+            handle = sys::init_stream(self.0);
+        }
+        StreamPrototype::new(handle)
     }
 
     fn terminate(self) {
@@ -78,44 +75,82 @@ impl RunningEngine {
     }
 }
 
+struct StreamPrototype<'a> {
+    handle: isize,
+    http_callbacks: HTTPCallbacks,
+    _lifetime: PhantomData<&'a ()>,
+}
+
+impl<'a> StreamPrototype<'a> {
+    fn new(handle: isize) -> Self {
+        Self {
+            handle,
+            http_callbacks: HTTPCallbacks::default(),
+            _lifetime: PhantomData,
+        }
+    }
+
+    fn with_on_headers(mut self, on_headers: OnHeaders) -> Self {
+        self.http_callbacks.on_headers = Some(on_headers);
+        self
+    }
+
+    fn with_on_data(mut self, on_data: OnData) -> Self {
+        self.http_callbacks.on_data = Some(on_data);
+        self
+    }
+
+    fn with_on_metadata(mut self, on_metadata: OnMetadata) -> Self {
+        self.http_callbacks.on_metadata = Some(on_metadata);
+        self
+    }
+
+    fn with_on_trailers(mut self, on_trailers: OnTrailers) -> Self {
+        self.http_callbacks.on_trailers = Some(on_trailers);
+        self
+    }
+
+    fn with_on_error(mut self, on_error: OnError) -> Self {
+        self.http_callbacks.on_error = Some(on_error);
+        self
+    }
+
+    fn with_on_complete(mut self, on_complete: OnComplete) -> Self {
+        self.http_callbacks.on_complete = Some(on_complete);
+        self
+    }
+
+    fn with_on_cancel(mut self, on_cancel: OnCancel) -> Self {
+        self.http_callbacks.on_cancel = Some(on_cancel);
+        self
+    }
+
+    fn with_on_send_window_available(
+        mut self,
+        on_send_window_available: OnSendWindowAvailable,
+    ) -> Self {
+        self.http_callbacks.on_send_window_available = Some(on_send_window_available);
+        self
+    }
+
+    fn start(self, explicit_flow_control: bool) -> Stream<'a> {
+        let envoy_http_callbacks = self.http_callbacks.into_envoy_http_callbacks();
+        unsafe {
+            sys::start_stream(self.handle, envoy_http_callbacks, explicit_flow_control);
+        }
+        Stream {
+            handle: self.handle,
+            _lifetime: self._lifetime,
+        }
+    }
+}
+
 struct Stream<'a> {
     handle: isize,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Stream<'a> {
-    fn start(
-        self,
-        http_callbacks: HTTPCallbacks,
-        explicit_flow_control: bool,
-    ) -> OpenStream<'a> {
-        // /**
-        //  * Open an underlying HTTP stream. Note: Streams must be started before other other interaction can
-        //  * can occur.
-        //  * @param stream, handle to the stream to be started.
-        //  * @param callbacks, the callbacks that will run the stream callbacks.
-        //  * @param explicit_flow_control, whether to enable explicit flow control on the response stream.
-        //  * @return envoy_stream, with a stream handle and a success status, or a failure status.
-        //  */
-        // envoy_status_t start_stream(envoy_stream_t stream, envoy_http_callbacks callbacks,
-        //                             bool explicit_flow_control);
-	let envoy_http_callbacks = http_callbacks.into_envoy_http_callbacks();
-	unsafe {
-	    sys::start_stream(self.handle, envoy_http_callbacks, explicit_flow_control);
-	}
-	OpenStream {
-	    handle: self.handle,
-	    _lifetime: self._lifetime,
-	}
-    }
-}
-
-struct OpenStream<'a> {
-    handle: isize,
-    _lifetime: PhantomData<&'a ()>,
-}
-
-impl<'a> OpenStream<'a> {
     fn send_headers(&mut self, headers: Headers, done: bool) {
         // /**
         //  * Send headers over an open HTTP stream. This method can be invoked once and needs to be called
@@ -482,49 +517,6 @@ impl Default for HTTPCallbacks {
 }
 
 impl HTTPCallbacks {
-    fn with_on_headers(mut self, on_headers: OnHeaders) -> Self {
-        self.on_headers = Some(on_headers);
-        self
-    }
-
-    fn with_on_data(mut self, on_data: OnData) -> Self {
-        self.on_data = Some(on_data);
-        self
-    }
-
-    fn with_on_metadata(mut self, on_metadata: OnMetadata) -> Self {
-        self.on_metadata = Some(on_metadata);
-        self
-    }
-
-    fn with_on_trailers(mut self, on_trailers: OnTrailers) -> Self {
-        self.on_trailers = Some(on_trailers);
-        self
-    }
-
-    fn with_on_error(mut self, on_error: OnError) -> Self {
-        self.on_error = Some(on_error);
-        self
-    }
-
-    fn with_on_complete(mut self, on_complete: OnComplete) -> Self {
-        self.on_complete = Some(on_complete);
-        self
-    }
-
-    fn with_on_cancel(mut self, on_cancel: OnCancel) -> Self {
-        self.on_cancel = Some(on_cancel);
-        self
-    }
-
-    fn with_on_send_window_available(
-        mut self,
-        on_send_window_available: OnSendWindowAvailable,
-    ) -> Self {
-        self.on_send_window_available = Some(on_send_window_available);
-        self
-    }
-
     fn into_envoy_http_callbacks(self) -> sys::envoy_http_callbacks {
         let http_callbacks = Box::into_raw(Box::new(self));
         sys::envoy_http_callbacks {
@@ -533,7 +525,7 @@ impl HTTPCallbacks {
             on_metadata: Some(HTTPCallbacks::c_on_metadata),
             on_trailers: Some(HTTPCallbacks::c_on_trailers),
             on_error: Some(HTTPCallbacks::c_on_error),
-	    on_complete: Some(HTTPCallbacks::c_on_complete),
+            on_complete: Some(HTTPCallbacks::c_on_complete),
             on_cancel: Some(HTTPCallbacks::c_on_cancel),
             on_send_window_available: Some(HTTPCallbacks::c_on_send_window_available),
             context: http_callbacks as *mut ffi::c_void,
@@ -546,12 +538,12 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-	let http_callbacks = context as *const HTTPCallbacks;
-	let headers = Headers::from_envoy_map(envoy_headers);
-	let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-	if let Some(on_headers) = &(*http_callbacks).on_headers {
-	    on_headers(headers, end_stream, stream_intel);
-	}
+        let http_callbacks = context as *const HTTPCallbacks;
+        let headers = Headers::from_envoy_map(envoy_headers);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        if let Some(on_headers) = &(*http_callbacks).on_headers {
+            on_headers(headers, end_stream, stream_intel);
+        }
         context
     }
 
@@ -592,21 +584,21 @@ impl HTTPCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-	context
+        context
     }
 
     unsafe extern "C" fn c_on_cancel(
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-	context
+        context
     }
 
     unsafe extern "C" fn c_on_send_window_available(
-	envoy_stream_intel: sys::envoy_stream_intel,
+        envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-	context
+        context
     }
 }
 
@@ -836,43 +828,47 @@ mod tests {
     use super::*;
 
     struct Event {
-	occurred: Mutex<bool>,
-	condvar: Condvar,
+        occurred: Mutex<bool>,
+        condvar: Condvar,
     }
 
     impl Event {
-	fn new() -> Self {
-	    Self {
-		occurred: Mutex::new(false),
-		condvar: Condvar::new(),
-	    }
-	}
+        fn new() -> Self {
+            Self {
+                occurred: Mutex::new(false),
+                condvar: Condvar::new(),
+            }
+        }
 
-	fn set(&self) {
-	    let mut guard = self.occurred.lock().unwrap();
-	    if !*guard {
-		(*guard) = true;
-		self.condvar.notify_all();
-	    }
-	}
+        fn set(&self) {
+            let mut guard = self.occurred.lock().unwrap();
+            if !*guard {
+                (*guard) = true;
+                self.condvar.notify_all();
+            }
+        }
 
-	fn wait(&self) {
-	    let guard = self.occurred.lock().unwrap();
-	    let _ = self.condvar.wait_while(guard, |occurred| { !(*occurred) });
-	}
+        fn wait(&self) {
+            let guard = self.occurred.lock().unwrap();
+            let _ = self.condvar.wait_while(guard, |occurred| !(*occurred));
+        }
     }
 
     fn make_running_engine() -> (RunningEngine, Arc<Event>) {
-	let engine_running = Arc::new(Event::new());
-	let engine_terminated = Arc::new(Event::new());
+        let engine_running = Arc::new(Event::new());
+        let engine_terminated = Arc::new(Event::new());
 
         let callbacks = {
             let engine_running = engine_running.clone();
             let engine_terminated = engine_terminated.clone();
 
             EngineCallbacks::default()
-                .with_on_engine_running(Box::new(move || { engine_running.set(); }))
-                .with_on_exit(Box::new(move || { engine_terminated.set(); }))
+                .with_on_engine_running(Box::new(move || {
+                    engine_running.set();
+                }))
+                .with_on_exit(Box::new(move || {
+                    engine_terminated.set();
+                }))
         };
         let logger = Logger::default().with_log(Box::new(|data| {
             print!("{}", data.into_string().unwrap());
@@ -882,30 +878,26 @@ mod tests {
         // TODO: populate config
         let config: &str = "";
         let engine = Engine::new(callbacks, logger, event_tracker).run(config, LogLevel::Info);
-	engine_running.wait();
+        engine_running.wait();
 
-	(engine, engine_terminated)
+        (engine, engine_terminated)
     }
 
     #[test]
     fn test_engine_lifecycle() {
-	let (engine, engine_terminated) = make_running_engine();
+        let (engine, engine_terminated) = make_running_engine();
         engine.terminate();
-	engine_terminated.wait();
+        engine_terminated.wait();
     }
 
     #[test]
     fn test_stream_lifecycle() {
-	let (engine, engine_terminated) = make_running_engine();
+        let (engine, engine_terminated) = make_running_engine();
 
-	let http_callbacks = HTTPCallbacks::default()
-	    .with_on_headers(Box::new(|headers: Map, end_stream: bool, stream_intel: StreamIntel| {
-	    }));
+        let mut stream = engine.new_stream().start(false);
+        // TODO: do something with the stream
 
-	let mut stream = engine.new_stream().start(http_callbacks, false);
-	// TODO: do something with the stream
-
-	engine.terminate();
-	engine_terminated.wait();
+        engine.terminate();
+        engine_terminated.wait();
     }
 }
