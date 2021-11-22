@@ -11,9 +11,6 @@ use crate::sys;
 
 // some things i don't like and want to work on
 //
-// - callbacks need to be wrapped in boxes all the time
-//   look to see if there's a good way to represent them statically
-//
 // - represent states of a stream in types
 //   instead of no-opping
 //
