@@ -1,7 +1,7 @@
 mod bridge;
 mod sys;
 
-use bridge::*;
+pub use bridge::*;
 
 #[cfg(test)]
 mod tests {

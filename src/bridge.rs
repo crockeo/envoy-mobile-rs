@@ -239,7 +239,7 @@ impl<Context> EngineBuilder<Context> {
 pub struct Engine(isize);
 
 impl Engine {
-    pub fn new_stream<'a, Context>(&'a self, context: Context) -> StreamPrototype<'a, Context> {
+    pub fn new_stream<Context>(&'_ self, context: Context) -> StreamPrototype<'_, Context> {
         let handle;
         unsafe {
             handle = sys::init_stream(self.0);
@@ -337,7 +337,7 @@ impl Engine {
     }
 
     pub fn dump_stats(&self) -> Data {
-        let mut envoy_data;
+        let envoy_data;
         unsafe {
             envoy_data = sys::envoy_nodata;
             sys::dump_stats(
@@ -515,13 +515,6 @@ impl Status {
             _ => Status::Failure,
         }
     }
-
-    fn to_envoy_status(self) -> sys::envoy_status_t {
-        match self {
-            Status::Success => 0,
-            Status::Failure => 1,
-        }
-    }
 }
 
 pub enum HistogramStatUnit {
@@ -566,16 +559,16 @@ impl ErrorCode {
 
 pub enum Network {
     Generic,
-    WLAN,
-    WWAN,
+    Wlan,
+    Wwan,
 }
 
 impl Network {
     fn into_envoy_network(self) -> sys::envoy_network_t {
         match self {
             Network::Generic => 0,
-            Network::WLAN => 1,
-            Network::WWAN => 2,
+            Network::Wlan => 1,
+            Network::Wwan => 2,
         }
     }
 }
@@ -896,11 +889,11 @@ impl<Context> EngineCallbacks<Context> {
 
     fn into_envoy_engine_callbacks(self) -> sys::envoy_engine_callbacks {
         let engine_callbacks = Box::into_raw(Box::new(self));
-        return sys::envoy_engine_callbacks {
+        sys::envoy_engine_callbacks {
             on_engine_running: Some(EngineCallbacks::<Context>::c_on_engine_running),
             on_exit: Some(EngineCallbacks::<Context>::c_on_exit),
             context: engine_callbacks as *mut ffi::c_void,
-        };
+        }
     }
 
     unsafe extern "C" fn c_on_engine_running(context: *mut ffi::c_void) {
