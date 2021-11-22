@@ -982,37 +982,9 @@ pub fn set_preferred_network(network: Network) {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::Condvar;
-    use std::sync::Mutex;
 
     use super::*;
-
-    struct Event {
-        occurred: Mutex<bool>,
-        condvar: Condvar,
-    }
-
-    impl Event {
-        fn new() -> Self {
-            Self {
-                occurred: Mutex::new(false),
-                condvar: Condvar::new(),
-            }
-        }
-
-        fn set(&self) {
-            let mut guard = self.occurred.lock().unwrap();
-            if !*guard {
-                (*guard) = true;
-                self.condvar.notify_all();
-            }
-        }
-
-        fn wait(&self) {
-            let guard = self.occurred.lock().unwrap();
-            let _ = self.condvar.wait_while(guard, |occurred| !(*occurred));
-        }
-    }
+    use crate::event::Event;
 
     fn make_engine() -> (Engine, Arc<Event>) {
         let engine_running = Arc::new(Event::new());
