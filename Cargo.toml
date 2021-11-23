@@ -9,3 +9,7 @@ edition = "2021"
 
 [build-dependencies]
 bindgen = "0.59.1"
+
+[dev-dependencies]
+tokio = { version = "*", features = ["macros", "test-util"] }
+tokio-test = "*"
