@@ -5,7 +5,24 @@ mod sys;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-pub use bridge::{EventTrackerTrack, LogLevel, LoggerLog};
+pub use bridge::{
+    Data, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel, LoggerLog, StatsTags,
+};
+
+#[derive(Clone)]
+struct EngineContext {
+    engine_running: Arc<event::Event>,
+    engine_terminated: Arc<event::Event>,
+}
+
+impl EngineContext {
+    fn new() -> Self {
+        Self {
+            engine_running: Arc::new(event::Event::new()),
+            engine_terminated: Arc::new(event::Event::new()),
+        }
+    }
+}
 
 pub struct EngineBuilder {
     builder: bridge::EngineBuilder<EngineContext>,
@@ -148,36 +165,104 @@ impl EngineBuilder {
     }
 }
 
-#[derive(Clone)]
-struct EngineContext {
-    engine_running: Arc<event::Event>,
-    engine_terminated: Arc<event::Event>,
-}
-
-impl EngineContext {
-    fn new() -> Self {
-        Self {
-            engine_running: Arc::new(event::Event::new()),
-            engine_terminated: Arc::new(event::Event::new()),
-        }
-    }
-}
-
 pub struct Engine {
     engine: bridge::Engine,
     context: EngineContext,
 }
 
 impl Engine {
+    pub fn new_stream(&'_ self, explicit_flow_control: bool) -> Stream<'_> {
+        let stream_context = StreamContext::new();
+        Stream {
+            stream: self
+                .engine
+                .new_stream(stream_context.clone())
+                .with_on_headers(|ctx, headers, end_stream, stream_intel| todo!())
+                .with_on_data(|ctx, data, end_stream, stream_intel| todo!())
+                .with_on_metadata(|ctx, metadata, stream_intel| todo!())
+                .with_on_trailers(|ctx, trailers, stream_intel| todo!())
+                .with_on_error(|ctx, error, stream_intel| todo!())
+                .with_on_complete(|ctx, stream_intel| todo!())
+                .with_on_cancel(|ctx, stream_intel| todo!())
+                .start(explicit_flow_control),
+        }
+    }
+
+    pub fn record_counter_inc<S: AsRef<str>>(&self, elements: S, tags: StatsTags, count: usize) {
+        self.engine.record_counter_inc(elements, tags, count)
+    }
+
+    pub fn record_gauge_set<S: AsRef<str>>(&self, elements: S, tags: StatsTags, value: usize) {
+        self.engine.record_gauge_set(elements, tags, value)
+    }
+
+    pub fn record_gauge_add<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+        self.engine.record_gauge_add(elements, tags, amount)
+    }
+
+    pub fn record_gauge_sub<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+        self.engine.record_gauge_sub(elements, tags, amount)
+    }
+
+    pub fn record_histogram_value<S: AsRef<str>>(
+        &self,
+        elements: S,
+        tags: StatsTags,
+        amount: usize,
+        unit_measure: HistogramStatUnit,
+    ) {
+        self.engine
+            .record_histogram_value(elements, tags, amount, unit_measure)
+    }
+
+    pub fn flush_stats(&self) {
+        self.engine.flush_stats()
+    }
+
+    pub fn dump_stats(&self) -> Data {
+        self.engine.dump_stats()
+    }
+
     pub fn terminate(self) -> event::EventFuture<()> {
         self.engine.terminate();
         event::EventFuture::new((), self.context.engine_terminated)
     }
 }
 
+#[derive(Clone)]
 struct StreamContext {}
 
-pub struct Stream {}
+impl StreamContext {
+    fn new() -> Self {
+        StreamContext {}
+    }
+}
+
+pub struct Stream<'a> {
+    stream: bridge::Stream<'a>,
+}
+
+impl Stream<'_> {
+    pub fn send_headers<T: Into<Headers>>(&mut self, headers: T, end_stream: bool) {
+        self.stream.send_headers(headers, end_stream)
+    }
+
+    pub fn send_data<T: Into<Data>>(&mut self, data: T, end_stream: bool) {
+        self.stream.send_data(data, end_stream)
+    }
+
+    pub fn send_metadata<T: Into<Headers>>(&mut self, metadata: T) {
+        self.stream.send_metadata(metadata)
+    }
+
+    pub fn send_trailers<T: Into<Headers>>(&mut self, trailers: T) {
+        self.stream.send_trailers(trailers)
+    }
+
+    pub fn read_data(&mut self, bytes_to_read: usize) {
+        self.stream.read_data(bytes_to_read)
+    }
+}
 
 #[cfg(test)]
 mod tests {
