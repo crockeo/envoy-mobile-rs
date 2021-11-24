@@ -1,4 +1,4 @@
-pub mod bridge;
+mod bridge;
 mod channel;
 mod event;
 mod sys;
