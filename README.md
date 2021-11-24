@@ -23,4 +23,7 @@ at which point I'll update this build process :)
 
 ## License
 
-All rights reserved.
+MIT Open Source License. See the [LICENSE](/LICENSE) document for terms.
+
+Based on [envoy-mobile](https://github.com/envoyproxy/envoy-mobile)
+licensed under the MIT Open Source License.
