@@ -49,7 +49,7 @@ pub struct EngineBuilder<Context> {
 }
 
 impl<Context> EngineBuilder<Context> {
-    pub fn new(callback_context:  Context) -> Self {
+    pub fn new(callback_context: Context) -> Self {
         Self {
             engine_callbacks: EngineCallbacks::new(callback_context),
             logger: Logger::default(),
@@ -738,7 +738,7 @@ impl<Context> HTTPCallbacks<Context> {
             on_complete: None,
             on_cancel: None,
             on_send_window_available: None,
-	    context,
+            context,
         }
     }
 
@@ -767,7 +767,12 @@ impl<Context> HTTPCallbacks<Context> {
         let headers = Headers::from_envoy_map(envoy_headers);
         let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
         if let Some(on_headers) = &(*http_callbacks).on_headers {
-            on_headers(&(*http_callbacks).context, headers, end_stream, stream_intel);
+            on_headers(
+                &(*http_callbacks).context,
+                headers,
+                end_stream,
+                stream_intel,
+            );
         }
         context
     }
@@ -877,11 +882,11 @@ struct EngineCallbacks<Context> {
 
 impl<Context> EngineCallbacks<Context> {
     fn new(context: Context) -> Self {
-	Self {
-	    on_engine_running: None,
-	    on_exit: None,
-	    context,
-	}
+        Self {
+            on_engine_running: None,
+            on_exit: None,
+            context,
+        }
     }
 
     fn into_envoy_engine_callbacks(self) -> sys::envoy_engine_callbacks {

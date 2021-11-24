@@ -182,17 +182,17 @@ impl Engine {
                     ctx.headers.put(headers);
                 })
                 .with_on_data(|ctx, data, _, _| {
-		    ctx.headers.close();
-		    ctx.data.put(data);
-		})
+                    ctx.headers.close();
+                    ctx.data.put(data);
+                })
                 .with_on_metadata(|ctx, metadata, _| {
-		    ctx.metadata.put(metadata);
-		})
+                    ctx.metadata.put(metadata);
+                })
                 .with_on_trailers(|ctx, trailers, _| {
-		    ctx.headers.close();
-		    ctx.data.close();
-		    ctx.trailers.put(trailers);
-		})
+                    ctx.headers.close();
+                    ctx.data.close();
+                    ctx.trailers.put(trailers);
+                })
                 .with_on_error(|ctx, error, _| {
                     ctx.completion.put(Completion::Error(error));
                     ctx.close_channels();
@@ -387,8 +387,8 @@ mod tests {
             println!("{:?}", data);
         }
 
-	let completion = stream.completion().poll().await;
-	assert_eq!(completion, Some(Completion::Complete));
+        let completion = stream.completion().poll().await;
+        assert_eq!(completion, Some(Completion::Complete));
 
         engine.terminate().await;
     }
