@@ -967,7 +967,8 @@ impl<Context> EngineCallbacks<Context> {
     }
 }
 
-pub type LoggerLog = Box<dyn Fn(Data)>;
+// TODO: provide a context to this thing
+pub type LoggerLog = fn(Data);
 
 struct Logger {
     log: Option<LoggerLog>,
@@ -1002,7 +1003,8 @@ impl Logger {
     }
 }
 
-pub type EventTrackerTrack = Box<dyn Fn(Map)>;
+// TODO: provide a context to this thing
+pub type EventTrackerTrack = fn(Map);
 
 struct EventTracker {
     track: Option<EventTrackerTrack>,

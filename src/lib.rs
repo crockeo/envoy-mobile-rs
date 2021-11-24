@@ -355,9 +355,9 @@ mod tests {
     #[test]
     async fn engine_lifecycle() {
         let engine = EngineBuilder::new()
-            .with_log(Box::new(|data| {
+            .with_log(|data| {
                 print!("{}", String::try_from(data).unwrap());
-            }))
+            })
             .build(LogLevel::Debug)
             .await;
         engine.terminate().await;
@@ -366,9 +366,9 @@ mod tests {
     #[test]
     async fn stream_lifecycle() {
         let engine = EngineBuilder::new()
-            .with_log(Box::new(|data| {
+            .with_log(|data| {
                 print!("{}", String::try_from(data).unwrap());
-            }))
+            })
             .build(LogLevel::Error)
             .await;
 
