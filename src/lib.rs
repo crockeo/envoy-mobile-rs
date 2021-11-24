@@ -383,16 +383,16 @@ mod tests {
             true,
         );
         while let Some(headers) = stream.headers().poll().await {
-	    let headers = HashMap::<String, String>::try_from(headers).unwrap();
-	    if let Some(status) = headers.get(":status") {
-		assert_eq!(status, "200");
-	    }
-	    for (key, value) in headers.into_iter() {
-		println!("{}: {}", key, value);
-	    }
+            let headers = HashMap::<String, String>::try_from(headers).unwrap();
+            if let Some(status) = headers.get(":status") {
+                assert_eq!(status, "200");
+            }
+            for (key, value) in headers.into_iter() {
+                println!("{}: {}", key, value);
+            }
         }
         while let Some(data) = stream.data().poll().await {
-	    let data_str: String = data.try_into().unwrap();
+            let data_str: &str = (&data).try_into().unwrap();
             println!("{}", data_str);
         }
 

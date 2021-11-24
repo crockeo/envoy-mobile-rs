@@ -6,6 +6,7 @@ use std::mem;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::ptr;
+use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 
 use crate::sys;
@@ -578,6 +579,20 @@ impl<S: AsRef<str>> From<S> for Data {
     fn from(string: S) -> Self {
         let string = string.as_ref().to_owned();
         Self(Vec::from_iter(string.into_bytes()))
+    }
+}
+
+impl From<Data> for Vec<u8> {
+    fn from(data: Data) -> Vec<u8> {
+	data.0
+    }
+}
+
+impl<'a> TryFrom<&'a Data> for &'a str {
+    type Error = Utf8Error;
+
+    fn try_from(data: &'a Data) -> Result<&'a str, Self::Error> {
+	std::str::from_utf8(&data.0)
     }
 }
 
