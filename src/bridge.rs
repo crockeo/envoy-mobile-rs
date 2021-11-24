@@ -9,6 +9,8 @@ use std::ptr;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 
+use pyo3::prelude::*;
+
 use crate::sys;
 
 // some things i don't like and want to work on
@@ -478,6 +480,8 @@ impl<'a> Stream<'a> {
     }
 }
 
+#[pyclass]
+#[derive(Copy, Clone)]
 pub enum LogLevel {
     Trace,
     Debug,

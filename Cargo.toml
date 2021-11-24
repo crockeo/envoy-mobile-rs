@@ -2,13 +2,25 @@
 name = "envoy-mobile-rs"
 version = "0.1.0"
 edition = "2021"
+links = "envoy_mobile"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "envoy_mobile"
+crate-type = ["cdylib"]
+
 [dependencies]
+futures = "0.3.18"
+
+[dependencies.pyo3]
+git = "https://github.com/pyo3/pyo3.git"
+rev = "f5f47bebcb5997c211c1b6b14139b0ff4e8478b5"
+features = ["extension-module"]
 
 [build-dependencies]
 bindgen = "0.59.1"
+pyo3-build-config = "0.15.1"
 
 [dev-dependencies]
 tokio = { version = "*", features = ["macros", "test-util"] }

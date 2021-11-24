@@ -1,33 +1,20 @@
 pub mod bridge;
 mod channel;
 mod event;
-mod python;
 mod sys;
 
+use futures::executor;
 use pyo3::prelude::*;
+use pyo3::exceptions::PyException;
+use pyo3::types::PyDict;
 
 use std::net::IpAddr;
 use std::sync::Arc;
 
 pub use bridge::{
-    Data, Error, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel, LoggerLog, Method,
-    Scheme, StatsTags,
+    set_preferred_network, Data, Error, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel,
+    LoggerLog, Method, Network, Scheme, StatsTags,
 };
-
-#[derive(Clone)]
-struct EngineContext {
-    engine_running: Arc<event::Event>,
-    engine_terminated: Arc<event::Event>,
-}
-
-impl EngineContext {
-    fn new() -> Self {
-        Self {
-            engine_running: Arc::default(),
-            engine_terminated: Arc::default(),
-        }
-    }
-}
 
 pub struct EngineBuilder {
     builder: bridge::EngineBuilder<EngineContext>,
@@ -348,6 +335,124 @@ impl Stream<'_> {
     pub fn reset_stream(self) {
         self.stream.reset_stream()
     }
+}
+
+#[pyclass(name = "Engine")]
+struct PyEngine(Option<Engine>);
+
+#[pymethods]
+impl PyEngine {
+    #[new(kwargs = "**")]
+    fn new(log_level: LogLevel, kwargs: Option<&PyDict>) -> PyResult<Self> {
+        let mut builder = EngineBuilder::default();
+        if let Some(kwargs) = kwargs {
+            if let Some(connect_timeout_seconds) = kwargs.get_item("connect_timeout_seconds") {
+                builder = builder
+                    .with_connect_timeout_seconds(connect_timeout_seconds.extract::<usize>()?);
+            }
+            if let Some(dns_refresh_rate_seconds) = kwargs.get_item("dns_refresh_rate_seconds") {
+                builder = builder
+                    .with_dns_refresh_rate_seconds(dns_refresh_rate_seconds.extract::<usize>()?);
+            }
+
+            if let Some(dns_fail_interval_seconds) =
+                kwargs.get_item("dns_fail_base_interval_seconds")
+            {
+                let (dns_fail_base_interval_seconds, dns_fail_max_interval_seconds) =
+                    dns_fail_interval_seconds.extract::<(usize, usize)>()?;
+
+                builder = builder.with_dns_fail_interval(
+                    dns_fail_base_interval_seconds,
+                    dns_fail_max_interval_seconds,
+                );
+            }
+
+            if let Some(dns_query_timeout_seconds) = kwargs.get_item("dns_query_timeout_seconds") {
+                builder = builder
+                    .with_dns_query_timeout_seconds(dns_query_timeout_seconds.extract::<usize>()?);
+            }
+
+            if let Some(enable_interface_binding) = kwargs.get_item("enable_interface_binding") {
+                builder = builder
+                    .with_enable_interface_binding(enable_interface_binding.extract::<bool>()?);
+            }
+
+            if let Some(h2_connection_keepalive_idle_interval_seconds) =
+                kwargs.get_item("h2_connection_keepalive_idle_interval_seconds")
+            {
+                builder = builder.with_h2_connection_keepalive_idle_interval_seconds(
+                    h2_connection_keepalive_idle_interval_seconds.extract::<usize>()?,
+                );
+            }
+
+            if let Some(h2_connection_keepalive_timeout) =
+                kwargs.get_item("h2_connection_keepalive_timeout")
+            {
+                builder = builder.with_h2_connection_keepalive_timeout(
+                    h2_connection_keepalive_timeout.extract::<usize>()?,
+                );
+            }
+
+            // TODO: manually convert IpAddr
+            // if let Some(stats_domain) = kwargs.get_item("stats_domain") {
+            //     builder = builder
+            //         .with_stats_domain(stats_domain.extract::<IpAddr>()?);
+            // }
+
+            if let Some(stats_flush_interval_seconds) =
+                kwargs.get_item("stats_flush_interval_seconds")
+            {
+                builder = builder.with_stats_flush_interval_seconds(
+                    stats_flush_interval_seconds.extract::<usize>()?,
+                );
+            }
+
+            // TODO: manually convert IpAddr
+            // if let Some(statsd_host) = kwargs.get_item("statsd_host") {
+            //     builder = builder
+            //         .with_statsd_host(statsd_host.extract::<IpAddr>()?);
+            // }
+
+            if let Some(statsd_port) = kwargs.get_item("statsd_port") {
+                builder = builder.with_statsd_port(statsd_port.extract::<u16>()?);
+            }
+
+            if let Some(stream_idle_timeout_seconds) =
+                kwargs.get_item("stream_idle_timeout_seconds")
+            {
+                builder = builder.with_stream_idle_timeout_seconds(
+                    stream_idle_timeout_seconds.extract::<usize>()?,
+                );
+            }
+
+            if let Some(per_try_idle_timeout_seconds) =
+                kwargs.get_item("per_try_idle_timeout_seconds")
+            {
+                builder = builder.with_per_try_idle_timeout_seconds(
+                    per_try_idle_timeout_seconds.extract::<usize>()?,
+                );
+            }
+        }
+
+        let engine = executor::block_on(builder.build(log_level));
+        Ok(Self(Some(engine)))
+    }
+
+    fn terminate(&mut self) -> PyResult<()> {
+	if let Some(engine) = self.0.take() {
+	    Ok(executor::block_on(engine.terminate()))
+	} else {
+	    Err(PyException::new_err("cannot terminate an engine after it has already been terminated"))
+	}
+    }
+}
+
+#[pymodule]
+#[pyo3(name = "envoy_mobile")]
+fn init_py_envoy_mobile(_: Python, module: &PyModule) -> PyResult<()> {
+    module.add_class::<LogLevel>()?;
+    module.add_class::<PyEngine>()?;
+    Ok(())
 }
 
 #[cfg(test)]
