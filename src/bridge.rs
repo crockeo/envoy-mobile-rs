@@ -633,6 +633,18 @@ impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
     }
 }
 
+impl TryFrom<Map> for Vec<(String, String)> {
+    type Error = FromUtf8Error;
+
+    fn try_from(map: Map) -> Result<Vec<(String, String)>, Self::Error> {
+	let mut pairs = Vec::with_capacity(map.0.len());
+	for (key, value) in map.0.into_iter() {
+	    pairs.push((key.try_into()?, value.try_into()?));
+	}
+	Ok(pairs)
+    }
+}
+
 impl Map {
     unsafe fn from_envoy_map(envoy_map: sys::envoy_map) -> Self {
         let length = envoy_map.length.try_into().unwrap();

@@ -380,11 +380,15 @@ mod tests {
             ],
             true,
         );
-        while let Some(value) = stream.headers().poll().await {
-            println!("{:?}", value);
+        while let Some(headers) = stream.headers().poll().await {
+	    let headers_vec: Vec<(String, String)> = headers.try_into().unwrap();
+	    for (key, value) in headers_vec.into_iter() {
+		println!("{}: {}", key, value);
+	    }
         }
         while let Some(data) = stream.data().poll().await {
-            println!("{:?}", data);
+	    let data_str: String = data.try_into().unwrap();
+            println!("{}", data_str);
         }
 
         let completion = stream.completion().poll().await;
