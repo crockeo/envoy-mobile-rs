@@ -1,4 +1,5 @@
 mod bridge;
+mod channel;
 mod event;
 mod sys;
 
@@ -6,7 +7,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 pub use bridge::{
-    Data, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel, LoggerLog, StatsTags,
+    Data, Error, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel, LoggerLog, StatsTags,
 };
 
 #[derive(Clone)]
@@ -172,19 +173,40 @@ pub struct Engine {
 
 impl Engine {
     pub fn new_stream(&'_ self, explicit_flow_control: bool) -> Stream<'_> {
-        let stream_context = StreamContext::new();
+        let stream_context = Arc::new(StreamContext::new());
         Stream {
             stream: self
                 .engine
                 .new_stream(stream_context.clone())
-                .with_on_headers(|ctx, headers, end_stream, stream_intel| todo!())
-                .with_on_data(|ctx, data, end_stream, stream_intel| todo!())
-                .with_on_metadata(|ctx, metadata, stream_intel| todo!())
-                .with_on_trailers(|ctx, trailers, stream_intel| todo!())
-                .with_on_error(|ctx, error, stream_intel| todo!())
-                .with_on_complete(|ctx, stream_intel| todo!())
-                .with_on_cancel(|ctx, stream_intel| todo!())
+                .with_on_headers(|ctx, headers, _, _| {
+                    ctx.headers.put(headers);
+                })
+                .with_on_data(|ctx, data, _, _| {
+		    ctx.headers.close();
+		    ctx.data.put(data);
+		})
+                .with_on_metadata(|ctx, metadata, _| {
+		    ctx.metadata.put(metadata);
+		})
+                .with_on_trailers(|ctx, trailers, _| {
+		    ctx.headers.close();
+		    ctx.data.close();
+		    ctx.trailers.put(trailers);
+		})
+                .with_on_error(|ctx, error, _| {
+                    ctx.completion.put(Completion::Error(error));
+                    ctx.close_channels();
+                })
+                .with_on_complete(|ctx, _| {
+                    ctx.completion.put(Completion::Complete);
+                    ctx.close_channels();
+                })
+                .with_on_cancel(|ctx, _| {
+                    ctx.completion.put(Completion::Cancel);
+                    ctx.close_channels();
+                })
                 .start(explicit_flow_control),
+            context: stream_context.clone(),
         }
     }
 
@@ -229,17 +251,47 @@ impl Engine {
     }
 }
 
-#[derive(Clone)]
-struct StreamContext {}
+#[derive(Debug, PartialEq)]
+pub enum Completion {
+    Cancel,
+    Complete,
+    Error(Error),
+}
+
+struct StreamContext {
+    headers: channel::Channel<Headers>,
+    data: channel::Channel<Data>,
+    metadata: channel::Channel<Headers>,
+    trailers: channel::Channel<Headers>,
+    send_window_available: channel::Channel<()>,
+    completion: channel::Channel<Completion>,
+}
 
 impl StreamContext {
     fn new() -> Self {
-        StreamContext {}
+        StreamContext {
+            headers: channel::Channel::new(),
+            data: channel::Channel::new(),
+            metadata: channel::Channel::new(),
+            trailers: channel::Channel::new(),
+            send_window_available: channel::Channel::new(),
+            completion: channel::Channel::new(),
+        }
+    }
+
+    fn close_channels(&self) {
+        self.headers.close();
+        self.data.close();
+        self.metadata.close();
+        self.trailers.close();
+        self.send_window_available.close();
+        self.completion.close();
     }
 }
 
 pub struct Stream<'a> {
     stream: bridge::Stream<'a>,
+    context: Arc<StreamContext>,
 }
 
 impl Stream<'_> {
@@ -247,20 +299,48 @@ impl Stream<'_> {
         self.stream.send_headers(headers, end_stream)
     }
 
+    pub fn headers(&'_ self) -> channel::ReadOnlyChannel<'_, Headers> {
+        channel::ReadOnlyChannel::new(&self.context.headers)
+    }
+
     pub fn send_data<T: Into<Data>>(&mut self, data: T, end_stream: bool) {
         self.stream.send_data(data, end_stream)
+    }
+
+    pub fn data(&'_ self) -> channel::ReadOnlyChannel<'_, Data> {
+        channel::ReadOnlyChannel::new(&self.context.data)
     }
 
     pub fn send_metadata<T: Into<Headers>>(&mut self, metadata: T) {
         self.stream.send_metadata(metadata)
     }
 
+    pub fn metadata(&'_ self) -> channel::ReadOnlyChannel<'_, Headers> {
+        channel::ReadOnlyChannel::new(&self.context.metadata)
+    }
+
     pub fn send_trailers<T: Into<Headers>>(&mut self, trailers: T) {
         self.stream.send_trailers(trailers)
     }
 
+    pub fn trailers(&'_ self) -> channel::ReadOnlyChannel<'_, Headers> {
+        channel::ReadOnlyChannel::new(&self.context.trailers)
+    }
+
     pub fn read_data(&mut self, bytes_to_read: usize) {
         self.stream.read_data(bytes_to_read)
+    }
+
+    pub fn send_window_available(&'_ self) -> channel::ReadOnlyChannel<'_, ()> {
+        channel::ReadOnlyChannel::new(&self.context.send_window_available)
+    }
+
+    pub fn completion(&'_ self) -> channel::ReadOnlyChannel<'_, Completion> {
+        channel::ReadOnlyChannel::new(&self.context.completion)
+    }
+
+    pub fn reset_stream(self) {
+        self.stream.reset_stream()
     }
 }
 
@@ -278,6 +358,38 @@ mod tests {
             }))
             .build(LogLevel::Debug)
             .await;
+        engine.terminate().await;
+    }
+
+    #[test]
+    async fn stream_lifecycle() {
+        let engine = EngineBuilder::new()
+            .with_log(Box::new(|data| {
+                print!("{}", String::try_from(data).unwrap());
+            }))
+            .build(LogLevel::Error)
+            .await;
+
+        let mut stream = engine.new_stream(false);
+        stream.send_headers(
+            vec![
+                (":method", "GET"),
+                (":scheme", "https"),
+                (":authority", "api.lyft.com"),
+                (":path", "/ping"),
+            ],
+            true,
+        );
+        while let Some(value) = stream.headers().poll().await {
+            println!("{:?}", value);
+        }
+        while let Some(data) = stream.data().poll().await {
+            println!("{:?}", data);
+        }
+
+	let completion = stream.completion().poll().await;
+	assert_eq!(completion, Some(Completion::Complete));
+
         engine.terminate().await;
     }
 }

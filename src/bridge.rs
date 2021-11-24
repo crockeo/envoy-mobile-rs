@@ -532,7 +532,7 @@ impl HistogramStatUnit {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ErrorCode {
     UndefinedError,
     StreamReset,
@@ -670,7 +670,7 @@ impl Map {
 pub type Headers = Map;
 pub type StatsTags = Map;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Error {
     error_code: ErrorCode,
     message: Data,
