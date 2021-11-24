@@ -1,4 +1,5 @@
 use std::alloc;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi;
 use std::marker::PhantomData;
 use std::mem;
@@ -642,6 +643,32 @@ impl TryFrom<Map> for Vec<(String, String)> {
 	    pairs.push((key.try_into()?, value.try_into()?));
 	}
 	Ok(pairs)
+    }
+}
+
+impl TryFrom<Map> for HashMap<String, String> {
+    type Error = FromUtf8Error;
+
+    fn try_from(map: Map) -> Result<HashMap<String, String>, Self::Error> {
+	let pairs = Vec::<(String, String)>::try_from(map)?;
+	let mut hash_map = HashMap::new();
+	for (key, value) in pairs.into_iter() {
+	    hash_map.insert(key, value);
+	}
+	Ok(hash_map)
+    }
+}
+
+impl TryFrom<Map> for BTreeMap<String, String> {
+    type Error = FromUtf8Error;
+
+    fn try_from(map: Map) -> Result<BTreeMap<String, String>, Self::Error> {
+	let pairs = Vec::<(String, String)>::try_from(map)?;
+	let mut btree_map = BTreeMap::new();
+	for (key, value) in pairs.into_iter() {
+	    btree_map.insert(key, value);
+	}
+	Ok(btree_map)
     }
 }
 

@@ -346,6 +346,8 @@ impl Stream<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use tokio::test;
 
     use super::*;
@@ -381,8 +383,11 @@ mod tests {
             true,
         );
         while let Some(headers) = stream.headers().poll().await {
-	    let headers_vec: Vec<(String, String)> = headers.try_into().unwrap();
-	    for (key, value) in headers_vec.into_iter() {
+	    let headers = HashMap::<String, String>::try_from(headers).unwrap();
+	    if let Some(status) = headers.get(":status") {
+		assert_eq!(status, "200");
+	    }
+	    for (key, value) in headers.into_iter() {
 		println!("{}: {}", key, value);
 	    }
         }
