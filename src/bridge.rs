@@ -8,7 +8,10 @@ use std::net::Ipv4Addr;
 use std::ptr;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
+use std::sync::Arc;
 
+use crate::channel::{Channel, ReadOnlyChannel};
+use crate::event::{Event, EventFuture};
 use crate::sys;
 
 // some things i don't like and want to work on
@@ -22,8 +25,60 @@ use crate::sys;
 // - extend the lifetime of data passed across program boundaries
 //   a la string views
 
-pub struct EngineBuilder<Context> {
-    engine_callbacks: EngineCallbacks<Context>,
+#[derive(Clone)]
+pub struct EngineContext {
+    engine_running: Arc<Event>,
+    engine_terminated: Arc<Event>,
+}
+
+impl Default for EngineContext {
+    fn default() -> Self {
+        Self {
+            engine_running: Arc::default(),
+            engine_terminated: Arc::default(),
+        }
+    }
+}
+
+pub type OnEngineRunning = fn(&EngineContext);
+pub type OnExit = fn(&EngineContext);
+
+struct EngineCallbacks {
+    on_engine_running: OnEngineRunning,
+    on_exit: OnExit,
+    context: EngineContext,
+}
+
+impl EngineCallbacks {
+    fn new(context: EngineContext) -> Self {
+        Self {
+            on_engine_running: |ctx| ctx.engine_running.set(),
+            on_exit: |ctx| ctx.engine_terminated.set(),
+            context,
+        }
+    }
+
+    fn into_envoy_engine_callbacks(self) -> sys::envoy_engine_callbacks {
+        let engine_callbacks = Box::into_raw(Box::new(self));
+        sys::envoy_engine_callbacks {
+            on_engine_running: Some(EngineCallbacks::c_on_engine_running),
+            on_exit: Some(EngineCallbacks::c_on_exit),
+            context: engine_callbacks as *mut ffi::c_void,
+        }
+    }
+
+    unsafe extern "C" fn c_on_engine_running(context: *mut ffi::c_void) {
+        let engine_callbacks = context as *mut EngineCallbacks;
+        ((*engine_callbacks).on_engine_running)(&(*engine_callbacks).context);
+    }
+
+    unsafe extern "C" fn c_on_exit(context: *mut ffi::c_void) {
+        let engine_callbacks = Box::from_raw(context as *mut EngineCallbacks);
+        ((*engine_callbacks).on_exit)(&engine_callbacks.context);
+    }
+}
+
+pub struct EngineBuilder {
     logger: Logger,
     event_tracker: EventTracker,
     connect_timeout_seconds: usize,
@@ -50,10 +105,9 @@ pub struct EngineBuilder<Context> {
     // - &virtual_clusters []
 }
 
-impl<Context> EngineBuilder<Context> {
-    pub fn new(callback_context: Context) -> Self {
+impl Default for EngineBuilder {
+    fn default() -> Self {
         Self {
-            engine_callbacks: EngineCallbacks::new(callback_context),
             logger: Logger::default(),
             event_tracker: EventTracker::default(),
             connect_timeout_seconds: 30,
@@ -72,17 +126,9 @@ impl<Context> EngineBuilder<Context> {
             per_try_idle_timeout_seconds: 15,
         }
     }
+}
 
-    pub fn with_on_engine_running(mut self, on_engine_running: OnEngineRunning<Context>) -> Self {
-        self.engine_callbacks.on_engine_running = Some(on_engine_running);
-        self
-    }
-
-    pub fn with_on_exit(mut self, on_exit: OnExit<Context>) -> Self {
-        self.engine_callbacks.on_exit = Some(on_exit);
-        self
-    }
-
+impl EngineBuilder {
     pub fn with_log(mut self, log: LoggerLog) -> Self {
         self.logger.log = Some(log);
         self
@@ -176,8 +222,9 @@ impl<Context> EngineBuilder<Context> {
         self
     }
 
-    pub fn build(self, log_level: LogLevel) -> Engine {
-        let envoy_callbacks = self.engine_callbacks.into_envoy_engine_callbacks();
+    pub fn build(self, log_level: LogLevel) -> EventFuture<Engine> {
+        let context = EngineContext::default();
+        let envoy_callbacks = EngineCallbacks::new(context.clone()).into_envoy_engine_callbacks();
         let envoy_logger = self.logger.into_envoy_logger();
         let envoy_event_tracker = self.event_tracker.into_envoy_event_tracker();
         let handle;
@@ -231,19 +278,35 @@ impl<Context> EngineBuilder<Context> {
             // TODO: actually use the above config once i have config loading set up
             sys::run_engine(handle, config_cstr.as_ptr(), log_level.into_raw());
         }
-        Engine(handle)
+
+	let engine_running = context.engine_running.clone();
+        EventFuture::new(Engine { handle, context }, engine_running)
     }
 }
 
-pub struct Engine(isize);
+pub struct Engine {
+    handle: isize,
+    context: EngineContext,
+}
 
 impl Engine {
-    pub fn new_stream<Context>(&'_ self, context: Context) -> StreamPrototype<'_, Context> {
+    pub fn new_stream(&'_ self, explicit_flow_control: bool) -> Stream<'_> {
         let handle;
         unsafe {
-            handle = sys::init_stream(self.0);
+            handle = sys::init_stream(self.handle);
         }
-        StreamPrototype::new(handle, context)
+
+        let stream_context = Arc::<StreamContext>::default();
+        let stream_callbacks = StreamCallbacks::new(stream_context.clone());
+        unsafe {
+            sys::start_stream(
+                handle,
+                stream_callbacks.into_envoy_http_callbacks(),
+                explicit_flow_control,
+            );
+        }
+
+        Stream::new(handle, stream_context)
     }
 
     pub fn record_counter_inc<S: AsRef<str>>(&self, elements: S, tags: StatsTags, count: usize) {
@@ -253,7 +316,7 @@ impl Engine {
         let envoy_stats_tags = tags.into_envoy_map();
         unsafe {
             sys::record_counter_inc(
-                self.0,
+                self.handle,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
                 count.try_into().unwrap(),
@@ -268,7 +331,7 @@ impl Engine {
         let envoy_stats_tags = tags.into_envoy_map();
         unsafe {
             sys::record_gauge_set(
-                self.0,
+                self.handle,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
                 value.try_into().unwrap(),
@@ -283,7 +346,7 @@ impl Engine {
         let envoy_stats_tags = tags.into_envoy_map();
         unsafe {
             sys::record_gauge_add(
-                self.0,
+                self.handle,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
                 amount.try_into().unwrap(),
@@ -298,7 +361,7 @@ impl Engine {
         let envoy_stats_tags = tags.into_envoy_map();
         unsafe {
             sys::record_gauge_sub(
-                self.0,
+                self.handle,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
                 amount.try_into().unwrap(),
@@ -320,7 +383,7 @@ impl Engine {
         let envoy_histogram_stat_unit = unit_measure.into_envoy_histogram_stat_unit();
         unsafe {
             sys::record_histogram_value(
-                self.0,
+                self.handle,
                 elements_cstr.as_ptr(),
                 envoy_stats_tags,
                 amount.try_into().unwrap(),
@@ -331,7 +394,7 @@ impl Engine {
 
     pub fn flush_stats(&self) {
         unsafe {
-            sys::flush_stats(self.0);
+            sys::flush_stats(self.handle);
         }
     }
 
@@ -340,97 +403,248 @@ impl Engine {
         unsafe {
             envoy_data = sys::envoy_nodata;
             sys::dump_stats(
-                self.0,
+                self.handle,
                 &envoy_data as *const sys::envoy_data as *mut sys::envoy_data,
             );
             Data::from_envoy_data(envoy_data)
         }
     }
 
-    pub fn terminate(self) {
+    pub fn terminate(self) -> EventFuture<()> {
         unsafe {
-            sys::drain_connections(self.0);
-            sys::terminate_engine(self.0);
+            sys::drain_connections(self.handle);
+            sys::terminate_engine(self.handle);
         }
+        EventFuture::new((), self.context.engine_terminated)
     }
 }
 
-pub struct StreamPrototype<'a, Context> {
-    handle: isize,
-    http_callbacks: HTTPCallbacks<Context>,
-    _lifetime: PhantomData<&'a ()>,
+#[derive(Debug, PartialEq)]
+pub enum Completion {
+    Cancel,
+    Complete,
+    Error(Error),
 }
 
-impl<'a, Context> StreamPrototype<'a, Context> {
-    fn new(handle: isize, context: Context) -> Self {
+pub struct StreamContext {
+    headers: Channel<Headers>,
+    data: Channel<Data>,
+    metadata: Channel<Headers>,
+    trailers: Channel<Headers>,
+    send_window_available: Channel<()>,
+    completion: Channel<Completion>,
+}
+
+impl Default for StreamContext {
+    fn default() -> Self {
         Self {
-            handle,
-            http_callbacks: HTTPCallbacks::new(context),
-            _lifetime: PhantomData,
+            headers: Channel::default(),
+            data: Channel::default(),
+            metadata: Channel::default(),
+            trailers: Channel::default(),
+            send_window_available: Channel::default(),
+            completion: Channel::default(),
+        }
+    }
+}
+
+impl StreamContext {
+    fn close_channels(&self) {
+        self.headers.close();
+        self.data.close();
+        self.metadata.close();
+        self.trailers.close();
+        self.send_window_available.close();
+        self.completion.close();
+    }
+}
+
+pub type OnHeaders = fn(&StreamContext, Headers, bool, StreamIntel);
+pub type OnData = fn(&StreamContext, Data, bool, StreamIntel);
+pub type OnMetadata = fn(&StreamContext, Headers, StreamIntel);
+pub type OnTrailers = fn(&StreamContext, Headers, StreamIntel);
+pub type OnError = fn(&StreamContext, Error, StreamIntel);
+pub type OnComplete = fn(&StreamContext, StreamIntel);
+pub type OnCancel = fn(&StreamContext, StreamIntel);
+pub type OnSendWindowAvailable = fn(&StreamContext, StreamIntel);
+
+struct StreamCallbacks {
+    on_headers: OnHeaders,
+    on_data: OnData,
+    on_metadata: OnMetadata,
+    on_trailers: OnTrailers,
+    on_error: OnError,
+    on_complete: OnComplete,
+    on_cancel: OnCancel,
+    on_send_window_available: OnSendWindowAvailable,
+    context: Arc<StreamContext>,
+}
+
+impl StreamCallbacks {
+    fn new(context: Arc<StreamContext>) -> Self {
+        Self {
+            on_headers: |ctx, headers, _, _| {
+                ctx.headers.put(headers);
+            },
+            on_data: |ctx, data, _, _| {
+                ctx.headers.close();
+                ctx.data.put(data);
+            },
+            on_metadata: |ctx, metadata, _| {
+                ctx.metadata.put(metadata);
+            },
+            on_trailers: |ctx, trailers, _| {
+                ctx.headers.close();
+                ctx.data.close();
+                ctx.trailers.put(trailers);
+            },
+            on_error: |ctx, error, _| {
+                ctx.completion.put(Completion::Error(error));
+                ctx.close_channels();
+            },
+            on_complete: |ctx, _| {
+                ctx.completion.put(Completion::Complete);
+                ctx.close_channels();
+            },
+            on_cancel: |ctx, _| {
+                ctx.completion.put(Completion::Cancel);
+                ctx.close_channels();
+            },
+            on_send_window_available: |ctx, _| {
+                ctx.send_window_available.put(());
+            },
+            context,
         }
     }
 
-    pub fn with_on_headers(mut self, on_headers: OnHeaders<Context>) -> Self {
-        self.http_callbacks.on_headers = Some(on_headers);
-        self
-    }
-
-    pub fn with_on_data(mut self, on_data: OnData<Context>) -> Self {
-        self.http_callbacks.on_data = Some(on_data);
-        self
-    }
-
-    pub fn with_on_metadata(mut self, on_metadata: OnMetadata<Context>) -> Self {
-        self.http_callbacks.on_metadata = Some(on_metadata);
-        self
-    }
-
-    pub fn with_on_trailers(mut self, on_trailers: OnTrailers<Context>) -> Self {
-        self.http_callbacks.on_trailers = Some(on_trailers);
-        self
-    }
-
-    pub fn with_on_error(mut self, on_error: OnError<Context>) -> Self {
-        self.http_callbacks.on_error = Some(on_error);
-        self
-    }
-
-    pub fn with_on_complete(mut self, on_complete: OnComplete<Context>) -> Self {
-        self.http_callbacks.on_complete = Some(on_complete);
-        self
-    }
-
-    pub fn with_on_cancel(mut self, on_cancel: OnCancel<Context>) -> Self {
-        self.http_callbacks.on_cancel = Some(on_cancel);
-        self
-    }
-
-    pub fn with_on_send_window_available(
-        mut self,
-        on_send_window_available: OnSendWindowAvailable<Context>,
-    ) -> Self {
-        self.http_callbacks.on_send_window_available = Some(on_send_window_available);
-        self
-    }
-
-    pub fn start(self, explicit_flow_control: bool) -> Stream<'a> {
-        let envoy_http_callbacks = self.http_callbacks.into_envoy_http_callbacks();
-        unsafe {
-            sys::start_stream(self.handle, envoy_http_callbacks, explicit_flow_control);
+    fn into_envoy_http_callbacks(self) -> sys::envoy_http_callbacks {
+        let http_callbacks = Box::into_raw(Box::new(self));
+        sys::envoy_http_callbacks {
+            on_headers: Some(StreamCallbacks::c_on_headers),
+            on_data: Some(StreamCallbacks::c_on_data),
+            on_metadata: Some(StreamCallbacks::c_on_metadata),
+            on_trailers: Some(StreamCallbacks::c_on_trailers),
+            on_error: Some(StreamCallbacks::c_on_error),
+            on_complete: Some(StreamCallbacks::c_on_complete),
+            on_cancel: Some(StreamCallbacks::c_on_cancel),
+            on_send_window_available: Some(StreamCallbacks::c_on_send_window_available),
+            context: http_callbacks as *mut ffi::c_void,
         }
-        Stream {
-            handle: self.handle,
-            _lifetime: self._lifetime,
-        }
+    }
+
+    unsafe extern "C" fn c_on_headers(
+        envoy_headers: sys::envoy_headers,
+        end_stream: bool,
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let headers = Headers::from_envoy_map(envoy_headers);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_headers)(
+            &(*http_callbacks).context,
+            headers,
+            end_stream,
+            stream_intel,
+        );
+        context
+    }
+
+    unsafe extern "C" fn c_on_data(
+        envoy_data: sys::envoy_data,
+        end_stream: bool,
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let data = Data::from_envoy_data(envoy_data);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_data)(&(*http_callbacks).context, data, end_stream, stream_intel);
+        context
+    }
+
+    unsafe extern "C" fn c_on_metadata(
+        envoy_metadata: sys::envoy_headers,
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let metadata = Headers::from_envoy_map(envoy_metadata);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_metadata)(&(*http_callbacks).context, metadata, stream_intel);
+        context
+    }
+
+    unsafe extern "C" fn c_on_trailers(
+        envoy_trailers: sys::envoy_headers,
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let trailers = Headers::from_envoy_map(envoy_trailers);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_trailers)(&(*http_callbacks).context, trailers, stream_intel);
+        context
+    }
+
+    unsafe extern "C" fn c_on_error(
+        envoy_error: sys::envoy_error,
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let error = Error::from_envoy_error(envoy_error);
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_error)(&(*http_callbacks).context, error, stream_intel);
+        context
+    }
+
+    unsafe extern "C" fn c_on_complete(
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_complete)(&(*http_callbacks).context, stream_intel);
+        context
+    }
+
+    unsafe extern "C" fn c_on_cancel(
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_cancel)(&(*http_callbacks).context, stream_intel);
+        context
+    }
+
+    unsafe extern "C" fn c_on_send_window_available(
+        envoy_stream_intel: sys::envoy_stream_intel,
+        context: *mut ffi::c_void,
+    ) -> *mut ffi::c_void {
+        let http_callbacks = context as *const StreamCallbacks;
+        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
+        ((*http_callbacks).on_send_window_available)(&(*http_callbacks).context, stream_intel);
+        context
     }
 }
 
 pub struct Stream<'a> {
     handle: isize,
+    context: Arc<StreamContext>,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> Stream<'a> {
+    fn new(handle: isize, context: Arc<StreamContext>) -> Self {
+        Self {
+            handle,
+            context,
+            _lifetime: PhantomData,
+        }
+    }
+
     pub fn send_headers<T: Into<Headers>>(&mut self, headers: T, end_stream: bool) {
         let headers = headers.into();
         let envoy_headers = headers.into_envoy_map();
@@ -475,6 +689,30 @@ impl<'a> Stream<'a> {
         unsafe {
             sys::reset_stream(self.handle);
         }
+    }
+
+    pub fn headers(&'_ self) -> ReadOnlyChannel<'_, Headers> {
+        ReadOnlyChannel::new(&self.context.headers)
+    }
+
+    pub fn data(&'_ self) -> ReadOnlyChannel<'_, Data> {
+        ReadOnlyChannel::new(&self.context.data)
+    }
+
+    pub fn metadata(&'_ self) -> ReadOnlyChannel<'_, Headers> {
+        ReadOnlyChannel::new(&self.context.metadata)
+    }
+
+    pub fn trailers(&'_ self) -> ReadOnlyChannel<'_, Headers> {
+        ReadOnlyChannel::new(&self.context.trailers)
+    }
+
+    pub fn send_window_available(&'_ self) -> ReadOnlyChannel<'_, ()> {
+        ReadOnlyChannel::new(&self.context.send_window_available)
+    }
+
+    pub fn completion(&'_ self) -> ReadOnlyChannel<'_, Completion> {
+        ReadOnlyChannel::new(&self.context.completion)
     }
 }
 
@@ -584,7 +822,7 @@ impl<S: AsRef<str>> From<S> for Data {
 
 impl From<Data> for Vec<u8> {
     fn from(data: Data) -> Vec<u8> {
-	data.0
+        data.0
     }
 }
 
@@ -592,7 +830,7 @@ impl<'a> TryFrom<&'a Data> for &'a str {
     type Error = Utf8Error;
 
     fn try_from(data: &'a Data) -> Result<&'a str, Self::Error> {
-	std::str::from_utf8(&data.0)
+        std::str::from_utf8(&data.0)
     }
 }
 
@@ -653,11 +891,11 @@ impl TryFrom<Map> for Vec<(String, String)> {
     type Error = FromUtf8Error;
 
     fn try_from(map: Map) -> Result<Vec<(String, String)>, Self::Error> {
-	let mut pairs = Vec::with_capacity(map.0.len());
-	for (key, value) in map.0.into_iter() {
-	    pairs.push((key.try_into()?, value.try_into()?));
-	}
-	Ok(pairs)
+        let mut pairs = Vec::with_capacity(map.0.len());
+        for (key, value) in map.0.into_iter() {
+            pairs.push((key.try_into()?, value.try_into()?));
+        }
+        Ok(pairs)
     }
 }
 
@@ -665,12 +903,12 @@ impl TryFrom<Map> for HashMap<String, String> {
     type Error = FromUtf8Error;
 
     fn try_from(map: Map) -> Result<HashMap<String, String>, Self::Error> {
-	let pairs = Vec::<(String, String)>::try_from(map)?;
-	let mut hash_map = HashMap::new();
-	for (key, value) in pairs.into_iter() {
-	    hash_map.insert(key, value);
-	}
-	Ok(hash_map)
+        let pairs = Vec::<(String, String)>::try_from(map)?;
+        let mut hash_map = HashMap::new();
+        for (key, value) in pairs.into_iter() {
+            hash_map.insert(key, value);
+        }
+        Ok(hash_map)
     }
 }
 
@@ -678,23 +916,28 @@ impl TryFrom<Map> for BTreeMap<String, String> {
     type Error = FromUtf8Error;
 
     fn try_from(map: Map) -> Result<BTreeMap<String, String>, Self::Error> {
-	let pairs = Vec::<(String, String)>::try_from(map)?;
-	let mut btree_map = BTreeMap::new();
-	for (key, value) in pairs.into_iter() {
-	    btree_map.insert(key, value);
-	}
-	Ok(btree_map)
+        let pairs = Vec::<(String, String)>::try_from(map)?;
+        let mut btree_map = BTreeMap::new();
+        for (key, value) in pairs.into_iter() {
+            btree_map.insert(key, value);
+        }
+        Ok(btree_map)
     }
 }
 
 impl Map {
-    pub fn new_request_headers<S: AsRef<str>>(method: Method, scheme: Scheme, authority: S, path: S) -> Self {
-	Map::from(vec![
-	    (":method", method.into_envoy_method()),
-	    (":scheme", scheme.into_envoy_scheme()),
-	    (":authority", authority.as_ref()),
-	    (":path", path.as_ref()),
-	])
+    pub fn new_request_headers<S: AsRef<str>>(
+        method: Method,
+        scheme: Scheme,
+        authority: S,
+        path: S,
+    ) -> Self {
+        Map::from(vec![
+            (":method", method.into_envoy_method()),
+            (":scheme", scheme.into_envoy_scheme()),
+            (":authority", authority.as_ref()),
+            (":path", path.as_ref()),
+        ])
     }
 
     unsafe fn from_envoy_map(envoy_map: sys::envoy_map) -> Self {
@@ -765,213 +1008,6 @@ impl StreamIntel {
             stream_id: envoy_stream_intel.stream_id,
             connection_id: envoy_stream_intel.connection_id,
             attempt_count: envoy_stream_intel.attempt_count,
-        }
-    }
-}
-
-pub type OnHeaders<Context> = fn(&Context, Headers, bool, StreamIntel);
-pub type OnData<Context> = fn(&Context, Data, bool, StreamIntel);
-pub type OnMetadata<Context> = fn(&Context, Headers, StreamIntel);
-pub type OnTrailers<Context> = fn(&Context, Headers, StreamIntel);
-pub type OnError<Context> = fn(&Context, Error, StreamIntel);
-pub type OnComplete<Context> = fn(&Context, StreamIntel);
-pub type OnCancel<Context> = fn(&Context, StreamIntel);
-pub type OnSendWindowAvailable<Context> = fn(&Context, StreamIntel);
-
-struct HTTPCallbacks<Context> {
-    on_headers: Option<OnHeaders<Context>>,
-    on_data: Option<OnData<Context>>,
-    on_metadata: Option<OnMetadata<Context>>,
-    on_trailers: Option<OnTrailers<Context>>,
-    on_error: Option<OnError<Context>>,
-    on_complete: Option<OnComplete<Context>>,
-    on_cancel: Option<OnCancel<Context>>,
-    on_send_window_available: Option<OnSendWindowAvailable<Context>>,
-    context: Context,
-}
-
-impl<Context> HTTPCallbacks<Context> {
-    fn new(context: Context) -> Self {
-        Self {
-            on_headers: None,
-            on_data: None,
-            on_metadata: None,
-            on_trailers: None,
-            on_error: None,
-            on_complete: None,
-            on_cancel: None,
-            on_send_window_available: None,
-            context,
-        }
-    }
-
-    fn into_envoy_http_callbacks(self) -> sys::envoy_http_callbacks {
-        let http_callbacks = Box::into_raw(Box::new(self));
-        sys::envoy_http_callbacks {
-            on_headers: Some(HTTPCallbacks::<Context>::c_on_headers),
-            on_data: Some(HTTPCallbacks::<Context>::c_on_data),
-            on_metadata: Some(HTTPCallbacks::<Context>::c_on_metadata),
-            on_trailers: Some(HTTPCallbacks::<Context>::c_on_trailers),
-            on_error: Some(HTTPCallbacks::<Context>::c_on_error),
-            on_complete: Some(HTTPCallbacks::<Context>::c_on_complete),
-            on_cancel: Some(HTTPCallbacks::<Context>::c_on_cancel),
-            on_send_window_available: Some(HTTPCallbacks::<Context>::c_on_send_window_available),
-            context: http_callbacks as *mut ffi::c_void,
-        }
-    }
-
-    unsafe extern "C" fn c_on_headers(
-        envoy_headers: sys::envoy_headers,
-        end_stream: bool,
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let headers = Headers::from_envoy_map(envoy_headers);
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_headers) = &(*http_callbacks).on_headers {
-            on_headers(
-                &(*http_callbacks).context,
-                headers,
-                end_stream,
-                stream_intel,
-            );
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_data(
-        envoy_data: sys::envoy_data,
-        end_stream: bool,
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let data = Data::from_envoy_data(envoy_data);
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_data) = &(*http_callbacks).on_data {
-            on_data(&(*http_callbacks).context, data, end_stream, stream_intel);
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_metadata(
-        envoy_metadata: sys::envoy_headers,
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let metadata = Headers::from_envoy_map(envoy_metadata);
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_metadata) = &(*http_callbacks).on_metadata {
-            on_metadata(&(*http_callbacks).context, metadata, stream_intel);
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_trailers(
-        envoy_trailers: sys::envoy_headers,
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let trailers = Headers::from_envoy_map(envoy_trailers);
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_trailers) = &(*http_callbacks).on_trailers {
-            on_trailers(&(*http_callbacks).context, trailers, stream_intel);
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_error(
-        envoy_error: sys::envoy_error,
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let error = Error::from_envoy_error(envoy_error);
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_error) = &(*http_callbacks).on_error {
-            on_error(&(*http_callbacks).context, error, stream_intel);
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_complete(
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_complete) = &(*http_callbacks).on_complete {
-            on_complete(&(*http_callbacks).context, stream_intel);
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_cancel(
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_cancel) = &(*http_callbacks).on_cancel {
-            on_cancel(&(*http_callbacks).context, stream_intel);
-        }
-        context
-    }
-
-    unsafe extern "C" fn c_on_send_window_available(
-        envoy_stream_intel: sys::envoy_stream_intel,
-        context: *mut ffi::c_void,
-    ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const HTTPCallbacks<Context>;
-        let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
-        if let Some(on_send_window_available) = &(*http_callbacks).on_send_window_available {
-            on_send_window_available(&(*http_callbacks).context, stream_intel);
-        }
-        context
-    }
-}
-
-pub type OnEngineRunning<Context> = fn(&Context);
-pub type OnExit<Context> = fn(&Context);
-
-struct EngineCallbacks<Context> {
-    on_engine_running: Option<OnEngineRunning<Context>>,
-    on_exit: Option<OnExit<Context>>,
-    context: Context,
-}
-
-impl<Context> EngineCallbacks<Context> {
-    fn new(context: Context) -> Self {
-        Self {
-            on_engine_running: None,
-            on_exit: None,
-            context,
-        }
-    }
-
-    fn into_envoy_engine_callbacks(self) -> sys::envoy_engine_callbacks {
-        let engine_callbacks = Box::into_raw(Box::new(self));
-        sys::envoy_engine_callbacks {
-            on_engine_running: Some(EngineCallbacks::<Context>::c_on_engine_running),
-            on_exit: Some(EngineCallbacks::<Context>::c_on_exit),
-            context: engine_callbacks as *mut ffi::c_void,
-        }
-    }
-
-    unsafe extern "C" fn c_on_engine_running(context: *mut ffi::c_void) {
-        let engine_callbacks = context as *mut EngineCallbacks<Context>;
-        if let Some(on_engine_running) = &(*engine_callbacks).on_engine_running {
-            on_engine_running(&(*engine_callbacks).context);
-        }
-    }
-
-    unsafe extern "C" fn c_on_exit(context: *mut ffi::c_void) {
-        let engine_callbacks = Box::from_raw(context as *mut EngineCallbacks<Context>);
-        if let Some(on_exit) = engine_callbacks.on_exit {
-            on_exit(&engine_callbacks.context);
         }
     }
 }
@@ -1063,17 +1099,17 @@ pub enum Method {
 
 impl Method {
     fn into_envoy_method(self) -> &'static str {
-	match self {
-	    Method::Get => "GET",
-	    Method::Head => "HEAD",
-	    Method::Post => "POST",
-	    Method::Put => "PUT",
-	    Method::Delete => "DELETE",
-	    Method::Connect => "CONNECT",
-	    Method::Options => "OPTIONS",
-	    Method::Trace => "TRACE",
-	    Method::Patch => "PATCH",
-	}
+        match self {
+            Method::Get => "GET",
+            Method::Head => "HEAD",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Connect => "CONNECT",
+            Method::Options => "OPTIONS",
+            Method::Trace => "TRACE",
+            Method::Patch => "PATCH",
+        }
     }
 }
 
@@ -1084,9 +1120,9 @@ pub enum Scheme {
 
 impl Scheme {
     fn into_envoy_scheme(self) -> &'static str {
-	match self {
-	    Scheme::Http => "http",
-	    Scheme::Https => "https",
-	}
+        match self {
+            Scheme::Http => "http",
+            Scheme::Https => "https",
+        }
     }
 }
