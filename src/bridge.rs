@@ -688,6 +688,15 @@ impl TryFrom<Map> for BTreeMap<String, String> {
 }
 
 impl Map {
+    pub fn new_request_headers<S: AsRef<str>>(method: Method, scheme: Scheme, authority: S, path: S) -> Self {
+	Map::from(vec![
+	    (":method", method.into_envoy_method()),
+	    (":scheme", scheme.into_envoy_scheme()),
+	    (":authority", authority.as_ref()),
+	    (":path", path.as_ref()),
+	])
+    }
+
     unsafe fn from_envoy_map(envoy_map: sys::envoy_map) -> Self {
         let length = envoy_map.length.try_into().unwrap();
         let mut entries = Vec::with_capacity(length);
@@ -1037,5 +1046,47 @@ impl EventTracker {
 pub fn set_preferred_network(network: Network) {
     unsafe {
         sys::set_preferred_network(network.into_envoy_network());
+    }
+}
+
+pub enum Method {
+    Get,
+    Head,
+    Post,
+    Put,
+    Delete,
+    Connect,
+    Options,
+    Trace,
+    Patch,
+}
+
+impl Method {
+    fn into_envoy_method(self) -> &'static str {
+	match self {
+	    Method::Get => "GET",
+	    Method::Head => "HEAD",
+	    Method::Post => "POST",
+	    Method::Put => "PUT",
+	    Method::Delete => "DELETE",
+	    Method::Connect => "CONNECT",
+	    Method::Options => "OPTIONS",
+	    Method::Trace => "TRACE",
+	    Method::Patch => "PATCH",
+	}
+    }
+}
+
+pub enum Scheme {
+    Http,
+    Https,
+}
+
+impl Scheme {
+    fn into_envoy_scheme(self) -> &'static str {
+	match self {
+	    Scheme::Http => "http",
+	    Scheme::Https => "https",
+	}
     }
 }

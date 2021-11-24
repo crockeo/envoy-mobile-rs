@@ -7,7 +7,8 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 pub use bridge::{
-    Data, Error, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel, LoggerLog, StatsTags,
+    Data, Error, EventTrackerTrack, Headers, HistogramStatUnit, LogLevel, LoggerLog, Method,
+    Scheme, StatsTags,
 };
 
 #[derive(Clone)]
@@ -374,12 +375,12 @@ mod tests {
 
         let mut stream = engine.new_stream(false);
         stream.send_headers(
-            vec![
-                (":method", "GET"),
-                (":scheme", "https"),
-                (":authority", "api.lyft.com"),
-                (":path", "/ping"),
-            ],
+            Headers::new_request_headers(
+                bridge::Method::Get,
+                bridge::Scheme::Https,
+                "api.lyft.com",
+                "/ping",
+            ),
             true,
         );
         while let Some(headers) = stream.headers().poll().await {
