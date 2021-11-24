@@ -11,8 +11,8 @@ pub struct Channel<T> {
     wakers: Mutex<Vec<Waker>>,
 }
 
-impl<T> Channel<T> {
-    pub fn new() -> Self {
+impl<T> Default for Channel<T> {
+    fn default() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             tx,
@@ -20,7 +20,9 @@ impl<T> Channel<T> {
             wakers: Mutex::new(Vec::new()),
         }
     }
+}
 
+impl<T> Channel<T> {
     fn put_impl(&self, value: Option<T>) {
         self.tx.send(value).expect("failed to send over Channel");
 

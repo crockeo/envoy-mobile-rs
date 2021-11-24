@@ -20,8 +20,8 @@ struct EngineContext {
 impl EngineContext {
     fn new() -> Self {
         Self {
-            engine_running: Arc::new(event::Event::new()),
-            engine_terminated: Arc::new(event::Event::new()),
+            engine_running: Arc::default(),
+            engine_terminated: Arc::default(),
         }
     }
 }
@@ -31,8 +31,8 @@ pub struct EngineBuilder {
     context: EngineContext,
 }
 
-impl EngineBuilder {
-    pub fn new() -> Self {
+impl Default for EngineBuilder {
+    fn default() -> Self {
         let context = EngineContext::new();
         Self {
             builder: bridge::EngineBuilder::new(context.clone())
@@ -41,7 +41,9 @@ impl EngineBuilder {
             context,
         }
     }
+}
 
+impl EngineBuilder {
     pub fn with_log(mut self, log: LoggerLog) -> Self {
         self.builder = self.builder.with_log(log);
         self
@@ -207,7 +209,7 @@ impl Engine {
                     ctx.close_channels();
                 })
                 .start(explicit_flow_control),
-            context: stream_context.clone(),
+            context: stream_context,
         }
     }
 
@@ -271,12 +273,12 @@ struct StreamContext {
 impl StreamContext {
     fn new() -> Self {
         StreamContext {
-            headers: channel::Channel::new(),
-            data: channel::Channel::new(),
-            metadata: channel::Channel::new(),
-            trailers: channel::Channel::new(),
-            send_window_available: channel::Channel::new(),
-            completion: channel::Channel::new(),
+            headers: channel::Channel::default(),
+            data: channel::Channel::default(),
+            metadata: channel::Channel::default(),
+            trailers: channel::Channel::default(),
+            send_window_available: channel::Channel::default(),
+            completion: channel::Channel::default(),
         }
     }
 
@@ -355,7 +357,7 @@ mod tests {
 
     #[test]
     async fn engine_lifecycle() {
-        let engine = EngineBuilder::new()
+        let engine = EngineBuilder::default()
             .with_log(|data| {
                 print!("{}", String::try_from(data).unwrap());
             })
@@ -366,7 +368,7 @@ mod tests {
 
     #[test]
     async fn stream_lifecycle() {
-        let engine = EngineBuilder::new()
+        let engine = EngineBuilder::default()
             .with_log(|data| {
                 print!("{}", String::try_from(data).unwrap());
             })

@@ -13,15 +13,17 @@ pub struct Event {
     waker: Mutex<Option<Waker>>,
 }
 
-impl Event {
-    pub fn new() -> Self {
+impl Default for Event {
+    fn default() -> Self {
         Self {
             occurred: Mutex::new(false),
             condvar: Condvar::new(),
             waker: Mutex::new(None),
         }
     }
+}
 
+impl Event {
     pub fn set(&self) {
         let mut guard = self.occurred.lock().unwrap();
         if !*guard {
@@ -42,7 +44,7 @@ impl Event {
 
     pub fn wait(&self) {
         let guard = self.occurred.lock().unwrap();
-        let _ = self.condvar.wait_while(guard, |occurred| !(*occurred));
+        let _ = self.condvar.wait_while(guard, |occurred| !(*occurred)).unwrap();
     }
 
     pub fn set_waker(&self, waker: Waker) {
