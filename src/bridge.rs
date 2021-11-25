@@ -10,6 +10,8 @@ use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 use std::sync::Arc;
 
+use pyo3::prelude::*;
+
 use crate::channel::{Channel, ReadOnlyChannel};
 use crate::event::{Event, EventFuture};
 use crate::sys;
@@ -716,6 +718,8 @@ impl<'a> Stream<'a> {
     }
 }
 
+#[pyclass]
+#[derive(Clone, Copy)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -754,6 +758,8 @@ impl Status {
     }
 }
 
+#[pyclass]
+#[derive(Clone, Copy)]
 pub enum HistogramStatUnit {
     Unspecified,
     Bytes,
@@ -884,6 +890,16 @@ impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
             entries.push((Data::from(key), Data::from(value)));
         }
         Map(entries)
+    }
+}
+
+impl From<HashMap<String, String>> for Map {
+    fn from(hash_map: HashMap<String, String>) -> Self {
+	let mut pairs = Vec::with_capacity(hash_map.len());
+	for (key, value) in hash_map.into_iter() {
+	    pairs.push((Data::from(key), Data::from(value)));
+	}
+	Map(pairs)
     }
 }
 
