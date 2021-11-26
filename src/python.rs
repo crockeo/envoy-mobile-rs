@@ -1,221 +1,193 @@
 use std::collections::HashMap;
+use std::sync::Once;
 
 use futures::executor;
-use pyo3::exceptions::PyException;
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use url::Url;
 
-#[pyclass]
-struct Engine(Option<crate::Engine>);
+static mut ENGINE_INSTANCE: Option<crate::Engine> = None;
+static ENGINE_INSTANCE_INIT: Once = Once::new();
 
-#[pymethods]
-impl Engine {
-    #[new(kwargs = "**")]
-    fn new(log_level: crate::LogLevel, kwargs: Option<&PyDict>) -> PyResult<Self> {
-        let mut builder = crate::EngineBuilder::default();
-        if let Some(kwargs) = kwargs {
-            if let Some(connect_timeout_seconds) = kwargs.get_item("connect_timeout_seconds") {
-                builder = builder
-                    .with_connect_timeout_seconds(connect_timeout_seconds.extract::<usize>()?);
-            }
-            if let Some(dns_refresh_rate_seconds) = kwargs.get_item("dns_refresh_rate_seconds") {
-                builder = builder
-                    .with_dns_refresh_rate_seconds(dns_refresh_rate_seconds.extract::<usize>()?);
-            }
-
-            if let Some(dns_fail_interval_seconds) =
-                kwargs.get_item("dns_fail_base_interval_seconds")
-            {
-                let (dns_fail_base_interval_seconds, dns_fail_max_interval_seconds) =
-                    dns_fail_interval_seconds.extract::<(usize, usize)>()?;
-
-                builder = builder.with_dns_fail_interval(
-                    dns_fail_base_interval_seconds,
-                    dns_fail_max_interval_seconds,
-                );
-            }
-
-            if let Some(dns_query_timeout_seconds) = kwargs.get_item("dns_query_timeout_seconds") {
-                builder = builder
-                    .with_dns_query_timeout_seconds(dns_query_timeout_seconds.extract::<usize>()?);
-            }
-
-            if let Some(enable_interface_binding) = kwargs.get_item("enable_interface_binding") {
-                builder = builder
-                    .with_enable_interface_binding(enable_interface_binding.extract::<bool>()?);
-            }
-
-            if let Some(h2_connection_keepalive_idle_interval_seconds) =
-                kwargs.get_item("h2_connection_keepalive_idle_interval_seconds")
-            {
-                builder = builder.with_h2_connection_keepalive_idle_interval_seconds(
-                    h2_connection_keepalive_idle_interval_seconds.extract::<usize>()?,
-                );
-            }
-
-            if let Some(h2_connection_keepalive_timeout) =
-                kwargs.get_item("h2_connection_keepalive_timeout")
-            {
-                builder = builder.with_h2_connection_keepalive_timeout(
-                    h2_connection_keepalive_timeout.extract::<usize>()?,
-                );
-            }
-
-            // TODO: manually convert IpAddr
-            // if let Some(stats_domain) = kwargs.get_item("stats_domain") {
-            //     builder = builder
-            //         .with_stats_domain(stats_domain.extract::<IpAddr>()?);
-            // }
-
-            if let Some(stats_flush_interval_seconds) =
-                kwargs.get_item("stats_flush_interval_seconds")
-            {
-                builder = builder.with_stats_flush_interval_seconds(
-                    stats_flush_interval_seconds.extract::<usize>()?,
-                );
-            }
-
-            // TODO: manually convert IpAddr
-            // if let Some(statsd_host) = kwargs.get_item("statsd_host") {
-            //     builder = builder
-            //         .with_statsd_host(statsd_host.extract::<IpAddr>()?);
-            // }
-
-            if let Some(statsd_port) = kwargs.get_item("statsd_port") {
-                builder = builder.with_statsd_port(statsd_port.extract::<u16>()?);
-            }
-
-            if let Some(stream_idle_timeout_seconds) =
-                kwargs.get_item("stream_idle_timeout_seconds")
-            {
-                builder = builder.with_stream_idle_timeout_seconds(
-                    stream_idle_timeout_seconds.extract::<usize>()?,
-                );
-            }
-
-            if let Some(per_try_idle_timeout_seconds) =
-                kwargs.get_item("per_try_idle_timeout_seconds")
-            {
-                builder = builder.with_per_try_idle_timeout_seconds(
-                    per_try_idle_timeout_seconds.extract::<usize>()?,
-                );
-            }
-        }
-
-        let engine = executor::block_on(builder.build(log_level));
-        Ok(Self(Some(engine)))
-    }
-
-    pub fn new_stream(&self, explicit_flow_control: bool) -> Stream {
-	todo!()
-    }
-
-    pub fn record_counter_inc(
-        &self,
-        elements: &str,
-        tags: HashMap<String, String>,
-        count: usize,
-    ) -> PyResult<()> {
-        self.apply("record_counter_inc", move |engine| {
-            engine.record_counter_inc(elements, crate::StatsTags::from(tags), count)
-        })
-    }
-
-    pub fn record_gauge_set(
-        &self,
-        elements: &str,
-        tags: HashMap<String, String>,
-        value: usize,
-    ) -> PyResult<()> {
-        self.apply("record_gauge_set", move |engine| {
-            engine.record_gauge_set(elements, crate::StatsTags::from(tags), value)
-        })
-    }
-
-    pub fn record_gauge_add(
-        &self,
-        elements: &str,
-        tags: HashMap<String, String>,
-        amount: usize,
-    ) -> PyResult<()> {
-        self.apply("record_gauge_add", move |engine| {
-            engine.record_gauge_add(elements, crate::StatsTags::from(tags), amount)
-        })
-    }
-
-    pub fn record_gauge_sub(
-        &self,
-        elements: &str,
-        tags: HashMap<String, String>,
-        amount: usize,
-    ) -> PyResult<()> {
-        self.apply("record_gauge_sub", move |engine| {
-            engine.record_gauge_sub(elements, crate::StatsTags::from(tags), amount)
-        })
-    }
-
-    pub fn record_histogram_value(
-        &self,
-        elements: &str,
-        tags: HashMap<String, String>,
-        amount: usize,
-        unit_measure: crate::HistogramStatUnit,
-    ) -> PyResult<()> {
-        self.apply("record_histogram_value", move |engine| {
-            engine.record_histogram_value(
-                elements,
-                crate::StatsTags::from(tags),
-                amount,
-                unit_measure,
-            )
-        })
-    }
-
-    pub fn flush_stats(&self) -> PyResult<()> {
-        self.apply("flush_stats", move |engine| engine.flush_stats())
-    }
-
-    pub fn dump_stats(&self) -> PyResult<Vec<u8>> {
-        self.apply("dump_stats", move |engine| {
-            let data = engine.dump_stats();
-            data.into()
-        })
-    }
-
-    fn terminate(&mut self) -> PyResult<()> {
-        if let Some(engine) = self.0.take() {
-            Ok(executor::block_on(engine.terminate()))
-        } else {
-            Err(PyException::new_err(
-                "cannot terminate an engine after it has already been terminated",
+fn engine_instance() -> &'static crate::Engine {
+    unsafe {
+        // TODO: provide an interface to configure the engine instance
+        ENGINE_INSTANCE_INIT.call_once(|| {
+            ENGINE_INSTANCE = Some(executor::block_on(
+                crate::EngineBuilder::default().build(crate::LogLevel::Debug),
             ))
-        }
-    }
-}
+        });
 
-impl Engine {
-    fn apply<T>(&self, name: &str, func: impl FnOnce(&crate::Engine) -> T) -> PyResult<T> {
-        if let Some(engine) = &self.0 {
-            Ok(func(engine))
-        } else {
-            Err(PyException::new_err(format!(
-                "cannot {} after engine has been terminated",
-                name
-            )))
-        }
+        ENGINE_INSTANCE.as_ref().unwrap()
     }
 }
 
 #[pyclass]
-struct Stream();
+pub struct Response {
+    #[pyo3(get)]
+    status_code: u16,
+    #[pyo3(get)]
+    headers: HashMap<String, String>,
+    #[pyo3(get)]
+    body: Vec<u8>,
+}
 
-#[pymethods]
-impl Stream {
+impl Default for Response {
+    fn default() -> Self {
+        Self {
+            status_code: 0,
+            headers: HashMap::new(),
+            body: Vec::new(),
+        }
+    }
+}
+
+create_exception!(envoy_mobile, StreamCancelled, PyException);
+create_exception!(envoy_mobile, StreamErrored, PyException);
+
+#[pyclass]
+struct StreamErroredInformation {
+    partial_response: Response,
+    envoy_error: crate::Error,
+}
+
+#[pyfunction]
+pub fn request(
+    method: &str,
+    url: &str,
+    data: Option<Vec<u8>>,
+    headers: Option<HashMap<String, String>>,
+) -> PyResult<Response> {
+    let mut stream = engine_instance().new_stream(false);
+
+    let method = normalize_method(method)?;
+    let (scheme, authority, path) = normalize_url(url)?;
+    let (data, mut additional_headers) = normalize_data(data)?;
+
+    let extra_headers = vec![
+        (":method", method.into_envoy_method()),
+        (":scheme", scheme.into_envoy_scheme()),
+        (":authority", &authority),
+        (":path", &path),
+    ];
+    for (key, value) in extra_headers.into_iter() {
+        additional_headers.insert(key.to_string(), value.to_string());
+    }
+
+    let headers = normalize_headers(headers, additional_headers)?;
+
+    // TODO: allow chunked sending things over the wire
+    // and/or sending trailers and metadata
+    stream.send_headers(headers, data.len() == 0);
+    if data.len() > 0 {
+        stream.send_data(data, true);
+    }
+
+    executor::block_on(async {
+        let mut response = Response::default();
+        while let Some(headers_block) = stream.headers().poll().await {
+            // TODO: check for error here
+            let mut headers_block = HashMap::<String, String>::try_from(headers_block).unwrap();
+            if let Some(status) = headers_block.remove(":status") {
+                // TODO: check for error here
+                response.status_code = str::parse::<u16>(&status).unwrap();
+            }
+            response.headers.extend(headers_block.into_iter());
+        }
+
+        while let Some(body_block) = stream.data().poll().await {
+            response.body.extend(Vec::<u8>::from(body_block));
+        }
+
+        // TODO: populate headers with metadata and trailers?
+
+        // TODO: check for error here
+        match stream.completion().poll().await.unwrap() {
+            crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
+
+            crate::Completion::Complete => Ok(response),
+
+            crate::Completion::Error(envoy_error) => {
+                Err(StreamErrored::new_err(StreamErroredInformation {
+                    partial_response: response,
+                    envoy_error,
+                }))
+            }
+        }
+    })
+}
+
+fn normalize_method(method: &str) -> PyResult<crate::Method> {
+    crate::Method::try_from(method)
+        .map_err(|_| PyValueError::new_err(format!("invalid method '{}'", method)))
+}
+
+fn normalize_url(url: &str) -> PyResult<(crate::Scheme, String, String)> {
+    let url =
+        Url::parse(url).map_err(|_| PyValueError::new_err(format!("invalid URL '{}'", url)))?;
+
+    let scheme = crate::Scheme::try_from(url.scheme())
+        .map_err(|_| PyValueError::new_err(format!("invalid scheme '{}'", url.scheme())))?;
+
+    let authority = url
+        .host_str()
+        .ok_or_else(|| PyValueError::new_err(format!("URL must contain host '{}'", url)))?
+	.to_string();
+
+    let path = if let Some(query) = url.query() {
+        format!("{}?{}", url.path(), query)
+    } else {
+        url.path().to_string()
+    };
+
+    Ok((scheme, authority, path))
+}
+
+fn normalize_data(data: Option<Vec<u8>>) -> PyResult<(Vec<u8>, HashMap<String, String>)> {
+    let mut is_utf8 = false;
+    let data = match data {
+        None => Vec::<u8>::new(),
+        Some(data) => {
+            is_utf8 = std::str::from_utf8(&data).is_ok();
+            data
+        }
+    };
+
+    // TODO: do some kind of content sniffing (e.g. accept &PyAny?)
+    // in order to populate content-type
+    let mut headers = HashMap::<String, String>::new();
+    if is_utf8 {
+        headers.insert("charset".to_string(), "utf8".to_string());
+    }
+    if data.len() > 0 {
+        headers.insert("content-length".to_string(), format!("{}", data.len()));
+    }
+
+    Ok((data, headers))
+}
+
+fn normalize_headers(
+    headers: Option<HashMap<String, String>>,
+    additional_headers: HashMap<String, String>,
+) -> PyResult<HashMap<String, String>> {
+    // NOTE: yes this is obviously inefficient
+    // but it's functionality is obvious
+    let mut final_headers = HashMap::new();
+    for (key, value) in additional_headers {
+        final_headers.insert(key, value);
+    }
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            final_headers.insert(key, value);
+        }
+    }
+    Ok(final_headers)
 }
 
 #[pymodule]
 fn envoy_mobile(_: Python, module: &PyModule) -> PyResult<()> {
-    module.add_class::<crate::LogLevel>()?;
-    module.add_class::<Engine>()?;
+    module.add_class::<Response>()?;
+    module.add_function(wrap_pyfunction!(request, module)?)?;
     Ok(())
 }

@@ -281,7 +281,7 @@ impl EngineBuilder {
             sys::run_engine(handle, config_cstr.as_ptr(), log_level.into_raw());
         }
 
-	let engine_running = context.engine_running.clone();
+        let engine_running = context.engine_running.clone();
         EventFuture::new(Engine { handle, context }, engine_running)
     }
 }
@@ -819,16 +819,21 @@ impl Network {
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub struct Data(Vec<u8>);
 
-impl<S: AsRef<str>> From<S> for Data {
-    fn from(string: S) -> Self {
-        let string = string.as_ref().to_owned();
+impl From<&str> for Data {
+    fn from(string: &str) -> Self {
+        Data::from(string.to_owned())
+    }
+}
+
+impl From<String> for Data {
+    fn from(string: String) -> Self {
         Self(Vec::from_iter(string.into_bytes()))
     }
 }
 
-impl From<Data> for Vec<u8> {
-    fn from(data: Data) -> Vec<u8> {
-        data.0
+impl From<Vec<u8>> for Data {
+    fn from(data: Vec<u8>) -> Self {
+        Data(data)
     }
 }
 
@@ -844,7 +849,13 @@ impl TryFrom<Data> for String {
     type Error = FromUtf8Error;
 
     fn try_from(data: Data) -> Result<String, Self::Error> {
-        String::from_utf8(data.0)
+        String::from_utf8(data.into())
+    }
+}
+
+impl From<Data> for Vec<u8> {
+    fn from(data: Data) -> Vec<u8> {
+        data.0
     }
 }
 
@@ -883,7 +894,10 @@ impl Data {
 #[derive(Debug)]
 pub struct Map(Vec<(Data, Data)>);
 
-impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
+impl<S: AsRef<str>> From<Vec<(S, S)>> for Map
+where
+    Data: From<S>,
+{
     fn from(pairs: Vec<(S, S)>) -> Self {
         let mut entries = Vec::with_capacity(pairs.len());
         for (key, value) in pairs.into_iter() {
@@ -895,11 +909,11 @@ impl<S: AsRef<str>> From<Vec<(S, S)>> for Map {
 
 impl From<HashMap<String, String>> for Map {
     fn from(hash_map: HashMap<String, String>) -> Self {
-	let mut pairs = Vec::with_capacity(hash_map.len());
-	for (key, value) in hash_map.into_iter() {
-	    pairs.push((Data::from(key), Data::from(value)));
-	}
-	Map(pairs)
+        let mut pairs = Vec::with_capacity(hash_map.len());
+        for (key, value) in hash_map.into_iter() {
+            pairs.push((Data::from(key), Data::from(value)));
+        }
+        Map(pairs)
     }
 }
 
@@ -1101,6 +1115,7 @@ pub fn set_preferred_network(network: Network) {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Method {
     Get,
     Head,
@@ -1113,8 +1128,28 @@ pub enum Method {
     Patch,
 }
 
+impl TryFrom<&str> for Method {
+    type Error = &'static str;
+
+    fn try_from(string: &str) -> Result<Self, <Self as TryFrom<&str>>::Error> {
+        let string = string.to_lowercase();
+        Ok(match string.as_str() {
+            "get" => Method::Get,
+            "head" => Method::Head,
+            "post" => Method::Post,
+            "put" => Method::Put,
+            "delete" => Method::Delete,
+            "connect" => Method::Connect,
+            "options" => Method::Options,
+            "trace" => Method::Trace,
+            "patch" => Method::Patch,
+            _ => return Err("invalid method string"),
+        })
+    }
+}
+
 impl Method {
-    fn into_envoy_method(self) -> &'static str {
+    pub fn into_envoy_method(self) -> &'static str {
         match self {
             Method::Get => "GET",
             Method::Head => "HEAD",
@@ -1134,8 +1169,21 @@ pub enum Scheme {
     Https,
 }
 
+impl TryFrom<&str> for Scheme {
+    type Error = &'static str;
+
+    fn try_from(string: &str) -> Result<Self, Self::Error> {
+        let string = string.to_lowercase();
+        Ok(match string.as_ref() {
+            "http" => Scheme::Http,
+            "https" => Scheme::Https,
+            _ => return Err("invalid scheme string"),
+        })
+    }
+}
+
 impl Scheme {
-    fn into_envoy_scheme(self) -> &'static str {
+    pub fn into_envoy_scheme(self) -> &'static str {
         match self {
             Scheme::Http => "http",
             Scheme::Https => "https",

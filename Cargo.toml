@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 futures = "0.3.18"
+url = "2.2.2"
 
 [dependencies.pyo3]
 git = "https://github.com/pyo3/pyo3.git"

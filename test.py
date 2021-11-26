@@ -2,18 +2,10 @@ import envoy_mobile
 
 
 def main():
-    print("starting...")
-    engine = envoy_mobile.Engine(envoy_mobile.LogLevel.Debug)
-
-    print("creating stream...")
-    try:
-        stream = engine.new_stream(False)
-        # TODO: something here
-    except BaseException:
-        pass
-
-    print("terminating...")
-    engine.terminate()
+    response = envoy_mobile.request("GET", "https://api.lyft.com/ping", None, None)
+    print(response.status_code)
+    print(response.headers)
+    print(response.body)
 
 
 if __name__ == "__main__":
