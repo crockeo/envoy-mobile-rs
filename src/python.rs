@@ -15,7 +15,11 @@ fn engine_instance() -> &'static crate::Engine {
         // TODO: provide an interface to configure the engine instance
         ENGINE_INSTANCE_INIT.call_once(|| {
             ENGINE_INSTANCE = Some(executor::block_on(
-                crate::EngineBuilder::default().build(crate::LogLevel::Debug),
+                crate::EngineBuilder::default()
+                    .with_log(|data| {
+                        print!("{}", String::try_from(data).unwrap());
+                    })
+                    .build(crate::LogLevel::Debug),
             ))
         });
 
@@ -24,6 +28,7 @@ fn engine_instance() -> &'static crate::Engine {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct Response {
     #[pyo3(get)]
     status_code: u16,
@@ -48,7 +53,9 @@ create_exception!(envoy_mobile, StreamErrored, PyException);
 
 #[pyclass]
 struct StreamErroredInformation {
+    #[pyo3(get)]
     partial_response: Response,
+    #[pyo3(get)]
     envoy_error: crate::Error,
 }
 
@@ -132,8 +139,12 @@ fn normalize_url(url: &str) -> PyResult<(crate::Scheme, String, String)> {
 
     let authority = url
         .host_str()
-        .ok_or_else(|| PyValueError::new_err(format!("URL must contain host '{}'", url)))?
-	.to_string();
+        .ok_or_else(|| PyValueError::new_err(format!("URL must contain host '{}'", url)))?;
+    let authority = if let Some(port) = url.port() {
+	format!("{}:{}", authority, port)
+    } else {
+	authority.to_string()
+    };
 
     let path = if let Some(query) = url.query() {
         format!("{}?{}", url.path(), query)
@@ -186,8 +197,13 @@ fn normalize_headers(
 }
 
 #[pymodule]
-fn envoy_mobile(_: Python, module: &PyModule) -> PyResult<()> {
+fn envoy_mobile(py: Python, module: &PyModule) -> PyResult<()> {
     module.add_class::<Response>()?;
+    module.add_class::<StreamErroredInformation>()?;
     module.add_function(wrap_pyfunction!(request, module)?)?;
+
+    module.add("StreamCancelled", py.get_type::<StreamCancelled>())?;
+    module.add("StreamErrored", py.get_type::<StreamErrored>())?;
+
     Ok(())
 }

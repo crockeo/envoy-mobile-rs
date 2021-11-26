@@ -778,13 +778,26 @@ impl HistogramStatUnit {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[pyclass]
+#[derive(Copy, Debug, Clone, PartialEq)]
 pub enum ErrorCode {
     UndefinedError,
     StreamReset,
     ConnectionFailure,
     BufferLimitExceeded,
     RequestTimeout,
+}
+
+impl From<ErrorCode> for &'static str {
+    fn from(error_code: ErrorCode) -> &'static str {
+	match error_code {
+	    ErrorCode::UndefinedError => "undefined_error",
+	    ErrorCode::StreamReset => "stream_reset",
+	    ErrorCode::ConnectionFailure => "connection_failure",
+	    ErrorCode::BufferLimitExceeded => "buffer_limit_exceeded",
+	    ErrorCode::RequestTimeout => "request_timeout",
+	}
+    }
 }
 
 impl ErrorCode {
@@ -1006,10 +1019,14 @@ impl Map {
 pub type Headers = Map;
 pub type StatsTags = Map;
 
-#[derive(Debug, PartialEq)]
+#[pyclass]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Error {
+    #[pyo3(get)]
     error_code: ErrorCode,
-    message: Data,
+    #[pyo3(get)]
+    message: String,
+    #[pyo3(get)]
     attempt_count: i32,
 }
 
@@ -1017,7 +1034,9 @@ impl Error {
     unsafe fn from_envoy_error(envoy_error: sys::envoy_error) -> Self {
         let error = Self {
             error_code: ErrorCode::from_envoy_error_code(envoy_error.error_code),
-            message: Data::from_envoy_data_no_release(&envoy_error.message),
+            message: Data::from_envoy_data_no_release(&envoy_error.message)
+                .try_into()
+                .expect("envoy_mobile must return a string for envoy_error.message"),
             attempt_count: envoy_error.attempt_count,
         };
         sys::release_envoy_error(envoy_error);
