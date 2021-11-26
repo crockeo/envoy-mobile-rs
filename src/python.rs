@@ -1,8 +1,10 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Once;
 use std::task::{Context, Poll};
+use std::thread;
 
 use futures::executor;
 use pyo3::create_exception;
@@ -23,7 +25,7 @@ fn engine_instance() -> &'static crate::Engine {
                     .with_log(|data| {
                         print!("{}", String::try_from(data).unwrap());
                     })
-                    .build(crate::LogLevel::Debug),
+                    .build(crate::LogLevel::Error),
             ))
         });
 
@@ -74,6 +76,27 @@ pub fn request(
     executor::block_on(request_impl(engine, method, url, data, headers))
 }
 
+#[pyfunction]
+pub fn async_request(
+    method: String,
+    url: String,
+    data: Option<Vec<u8>>,
+    headers: Option<HashMap<String, String>>,
+    callback: &PyFunction,
+) -> PyResult<()> {
+    let engine = engine_instance();
+    let callback: PyObject = callback.into();
+    thread::spawn(move || {
+        let mut request_promise = request_impl(&engine, &method, &url, data, headers);
+        let py_future = PyFuture {
+            wake_func: callback,
+            inner: RefCell::new(request_promise),
+        };
+        executor::block_on(py_future);
+    });
+    Ok(())
+}
+
 async fn request_impl(
     engine: &crate::Engine,
     method: &str,
@@ -108,33 +131,33 @@ async fn request_impl(
 
     let mut response = Response::default();
     while let Some(headers_block) = stream.headers().poll().await {
-	// TODO: check for error here
-	let mut headers_block = HashMap::<String, String>::try_from(headers_block).unwrap();
-	if let Some(status) = headers_block.remove(":status") {
-	    // TODO: check for error here
-	    response.status_code = str::parse::<u16>(&status).unwrap();
-	}
-	response.headers.extend(headers_block.into_iter());
+        // TODO: check for error here
+        let mut headers_block = HashMap::<String, String>::try_from(headers_block).unwrap();
+        if let Some(status) = headers_block.remove(":status") {
+            // TODO: check for error here
+            response.status_code = str::parse::<u16>(&status).unwrap();
+        }
+        response.headers.extend(headers_block.into_iter());
     }
 
     while let Some(body_block) = stream.data().poll().await {
-	response.body.extend(Vec::<u8>::from(body_block));
+        response.body.extend(Vec::<u8>::from(body_block));
     }
 
     // TODO: populate headers with metadata and trailers?
 
     // TODO: check for error here
     match stream.completion().poll().await.unwrap() {
-	crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
+        crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
 
-	crate::Completion::Complete => Ok(response),
+        crate::Completion::Complete => Ok(response),
 
-	crate::Completion::Error(envoy_error) => {
-	    Err(StreamErrored::new_err(StreamErroredInformation {
-		partial_response: response,
-		envoy_error,
-	    }))
-	}
+        crate::Completion::Error(envoy_error) => {
+            Err(StreamErrored::new_err(StreamErroredInformation {
+                partial_response: response,
+                envoy_error,
+            }))
+        }
     }
 }
 
@@ -154,9 +177,9 @@ fn normalize_url(url: &str) -> PyResult<(crate::Scheme, String, String)> {
         .host_str()
         .ok_or_else(|| PyValueError::new_err(format!("URL must contain host '{}'", url)))?;
     let authority = if let Some(port) = url.port() {
-	format!("{}:{}", authority, port)
+        format!("{}:{}", authority, port)
     } else {
-	authority.to_string()
+        authority.to_string()
     };
 
     let path = if let Some(query) = url.query() {
@@ -210,25 +233,40 @@ fn normalize_headers(
 }
 
 struct PyFuture<T> {
-    wake_func: PyFunction,
-    inner: T,
+    wake_func: PyObject,
+    inner: RefCell<T>,
 }
 
 impl<T, U> Future for PyFuture<T>
 where
-    T: Future<Output = U> + Unpin {
-    type Output = PyResult<U>;
+    T: Future<Output = PyResult<U>> + Sized,
+    U: IntoPy<PyObject>,
+{
+    // TODO: think about how to surface async errors better
+    type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-	let result = Pin::new(&mut self.inner).poll(ctx);
-	if let Poll::Ready(result) = result {
-	    if let Err(e) = Python::with_gil(|_| self.wake_func.call((), None)) {
-		return Poll::Ready(Err(e));
-	    }
-	    Poll::Ready(Ok(result))
-	} else {
-	    Poll::Pending
+	let mut borrow = self.inner.borrow_mut();
+	let inner: &mut T = &mut *borrow;
+
+	let pin;
+	unsafe {
+	    pin = Pin::new_unchecked(inner);
 	}
+	let result = pin.poll(ctx);
+        match result {
+            Poll::Pending => Poll::Pending,
+
+            Poll::Ready(Ok(result)) => {
+                let _ = Python::with_gil(|py| self.wake_func.call(py, (result,), None));
+                Poll::Ready(())
+            }
+
+            Poll::Ready(Err(e)) => {
+                let _ = Python::with_gil(|py| self.wake_func.call(py, (e,), None));
+                Poll::Ready(())
+            }
+        }
     }
 }
 
@@ -237,6 +275,7 @@ fn envoy_mobile(py: Python, module: &PyModule) -> PyResult<()> {
     module.add_class::<Response>()?;
     module.add_class::<StreamErroredInformation>()?;
     module.add_function(wrap_pyfunction!(request, module)?)?;
+    module.add_function(wrap_pyfunction!(async_request, module)?)?;
 
     module.add("StreamCancelled", py.get_type::<StreamCancelled>())?;
     module.add("StreamErrored", py.get_type::<StreamErrored>())?;
