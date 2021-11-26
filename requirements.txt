@@ -1,0 +1,16 @@
+attrs==21.2.0
+gevent==21.8.0
+greenlet==1.1.2
+iniconfig==1.1.1
+maturin==0.12.1
+nodeenv==1.6.0
+packaging==21.3
+pluggy==1.0.0
+py==1.11.0
+py-cpuinfo==8.0.0
+pyparsing==3.0.6
+pytest==6.2.5
+pytest-benchmark==3.4.1
+toml==0.10.2
+zope.event==4.5.0
+zope.interface==5.4.0
