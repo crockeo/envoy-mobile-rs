@@ -70,7 +70,18 @@ pub fn request(
     data: Option<Vec<u8>>,
     headers: Option<HashMap<String, String>>,
 ) -> PyResult<Response> {
-    let mut stream = engine_instance().new_stream(false);
+    let engine = engine_instance();
+    executor::block_on(request_impl(engine, method, url, data, headers))
+}
+
+async fn request_impl(
+    engine: &crate::Engine,
+    method: &str,
+    url: &str,
+    data: Option<Vec<u8>>,
+    headers: Option<HashMap<String, String>>,
+) -> PyResult<Response> {
+    let mut stream = engine.new_stream(false);
 
     let method = normalize_method(method)?;
     let (scheme, authority, path) = normalize_url(url)?;
@@ -95,38 +106,36 @@ pub fn request(
         stream.send_data(data, true);
     }
 
-    executor::block_on(async {
-        let mut response = Response::default();
-        while let Some(headers_block) = stream.headers().poll().await {
-            // TODO: check for error here
-            let mut headers_block = HashMap::<String, String>::try_from(headers_block).unwrap();
-            if let Some(status) = headers_block.remove(":status") {
-                // TODO: check for error here
-                response.status_code = str::parse::<u16>(&status).unwrap();
-            }
-            response.headers.extend(headers_block.into_iter());
-        }
+    let mut response = Response::default();
+    while let Some(headers_block) = stream.headers().poll().await {
+	// TODO: check for error here
+	let mut headers_block = HashMap::<String, String>::try_from(headers_block).unwrap();
+	if let Some(status) = headers_block.remove(":status") {
+	    // TODO: check for error here
+	    response.status_code = str::parse::<u16>(&status).unwrap();
+	}
+	response.headers.extend(headers_block.into_iter());
+    }
 
-        while let Some(body_block) = stream.data().poll().await {
-            response.body.extend(Vec::<u8>::from(body_block));
-        }
+    while let Some(body_block) = stream.data().poll().await {
+	response.body.extend(Vec::<u8>::from(body_block));
+    }
 
-        // TODO: populate headers with metadata and trailers?
+    // TODO: populate headers with metadata and trailers?
 
-        // TODO: check for error here
-        match stream.completion().poll().await.unwrap() {
-            crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
+    // TODO: check for error here
+    match stream.completion().poll().await.unwrap() {
+	crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
 
-            crate::Completion::Complete => Ok(response),
+	crate::Completion::Complete => Ok(response),
 
-            crate::Completion::Error(envoy_error) => {
-                Err(StreamErrored::new_err(StreamErroredInformation {
-                    partial_response: response,
-                    envoy_error,
-                }))
-            }
-        }
-    })
+	crate::Completion::Error(envoy_error) => {
+	    Err(StreamErrored::new_err(StreamErroredInformation {
+		partial_response: response,
+		envoy_error,
+	    }))
+	}
+    }
 }
 
 fn normalize_method(method: &str) -> PyResult<crate::Method> {
