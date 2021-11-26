@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Once;
+use std::task::{Context, Poll};
 
 use futures::executor;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyFunction;
 use url::Url;
 
 static mut ENGINE_INSTANCE: Option<crate::Engine> = None;
@@ -194,6 +198,29 @@ fn normalize_headers(
         }
     }
     Ok(final_headers)
+}
+
+struct PyFuture<T> {
+    wake_func: PyFunction,
+    inner: T,
+}
+
+impl<T, U> Future for PyFuture<T>
+where
+    T: Future<Output = U> + Unpin {
+    type Output = PyResult<U>;
+
+    fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+	let result = Pin::new(&mut self.inner).poll(ctx);
+	if let Poll::Ready(result) = result {
+	    if let Err(e) = Python::with_gil(|_| self.wake_func.call((), None)) {
+		return Poll::Ready(Err(e));
+	    }
+	    Poll::Ready(Ok(result))
+	} else {
+	    Poll::Pending
+	}
+    }
 }
 
 #[pymodule]
