@@ -907,9 +907,6 @@ impl Data {
         let data_ptr = vec.as_ptr();
         let length = vec.len();
 
-        // TODO: this is leaking memory!
-        // make it so we keep around the pointer to the vector
-        // and can therefore release it later
         sys::envoy_data {
             length: length.try_into().unwrap(),
             bytes: data_ptr,
