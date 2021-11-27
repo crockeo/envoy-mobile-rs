@@ -15,4 +15,8 @@ fn main() {
         .unwrap();
 
     bindings.write_to_file(out_dir.join("bindings.rs")).unwrap();
+
+    if cfg!(target_os = "macos") {
+	pyo3_build_config::add_extension_module_link_args();
+    }
 }

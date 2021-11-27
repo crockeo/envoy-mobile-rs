@@ -18,6 +18,7 @@ features = ["extension-module"]
 
 [build-dependencies]
 bindgen = "0.59.1"
+pyo3-build-config = "0.15.1"
 
 [dev-dependencies]
 tokio = { version = "*", features = ["macros", "test-util"] }
