@@ -2,7 +2,6 @@ use std::alloc;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi;
 use std::marker::PhantomData;
-use std::mem;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::ptr;
@@ -44,10 +43,12 @@ impl Default for EngineContext {
 
 pub type OnEngineRunning = fn(&EngineContext);
 pub type OnExit = fn(&EngineContext);
+pub type EventTrack = fn(Map);
 
 struct EngineCallbacks {
     on_engine_running: OnEngineRunning,
     on_exit: OnExit,
+    event_track: EventTrack,
     context: EngineContext,
 }
 
@@ -56,17 +57,28 @@ impl EngineCallbacks {
         Self {
             on_engine_running: |ctx| ctx.engine_running.set(),
             on_exit: |ctx| ctx.engine_terminated.set(),
+            event_track: |_| {},
             context,
         }
     }
 
-    fn into_envoy_engine_callbacks(self) -> sys::envoy_engine_callbacks {
+    fn into_envoy_engine_callbacks(
+        self,
+    ) -> (sys::envoy_engine_callbacks, sys::envoy_event_tracker) {
         let engine_callbacks = Box::into_raw(Box::new(self));
-        sys::envoy_engine_callbacks {
+
+        let envoy_engine_callbacks = sys::envoy_engine_callbacks {
             on_engine_running: Some(EngineCallbacks::c_on_engine_running),
             on_exit: Some(EngineCallbacks::c_on_exit),
             context: engine_callbacks as *mut ffi::c_void,
-        }
+        };
+
+        let envoy_event_tracker = sys::envoy_event_tracker {
+            track: Some(EngineCallbacks::c_track),
+            context: engine_callbacks as *mut ffi::c_void,
+        };
+
+        (envoy_engine_callbacks, envoy_event_tracker)
     }
 
     unsafe extern "C" fn c_on_engine_running(context: *mut ffi::c_void) {
@@ -78,11 +90,16 @@ impl EngineCallbacks {
         let engine_callbacks = Box::from_raw(context as *mut EngineCallbacks);
         ((*engine_callbacks).on_exit)(&engine_callbacks.context);
     }
+
+    unsafe extern "C" fn c_track(envoy_map: sys::envoy_map, context: *const ffi::c_void) {
+        let engine_callbacks = context as *const EngineCallbacks;
+        ((*engine_callbacks).event_track)(Map::from_envoy_map(envoy_map));
+    }
 }
 
 pub struct EngineBuilder {
     logger: Logger,
-    event_tracker: EventTracker,
+    event_track: Option<EventTrack>,
     connect_timeout_seconds: usize,
     dns_refresh_rate_seconds: usize,
     dns_fail_base_interval_seconds: usize,
@@ -111,7 +128,7 @@ impl Default for EngineBuilder {
     fn default() -> Self {
         Self {
             logger: Logger::default(),
-            event_tracker: EventTracker::default(),
+            event_track: None,
             connect_timeout_seconds: 30,
             dns_refresh_rate_seconds: 60,
             dns_fail_base_interval_seconds: 2,
@@ -136,8 +153,8 @@ impl EngineBuilder {
         self
     }
 
-    pub fn with_track(mut self, track: EventTrackerTrack) -> Self {
-        self.event_tracker.track = Some(track);
+    pub fn with_track(mut self, track: EventTrack) -> Self {
+        self.event_track = Some(track);
         self
     }
 
@@ -226,9 +243,9 @@ impl EngineBuilder {
 
     pub fn build(self, log_level: LogLevel) -> EventFuture<Engine> {
         let context = EngineContext::default();
-        let envoy_callbacks = EngineCallbacks::new(context.clone()).into_envoy_engine_callbacks();
+        let (envoy_callbacks, envoy_event_tracker) =
+            EngineCallbacks::new(context.clone()).into_envoy_engine_callbacks();
         let envoy_logger = self.logger.into_envoy_logger();
-        let envoy_event_tracker = self.event_tracker.into_envoy_event_tracker();
         let handle;
         unsafe {
             handle = sys::init_engine(envoy_callbacks, envoy_logger, envoy_event_tracker);
@@ -277,8 +294,7 @@ impl EngineBuilder {
         let config_cstr = ffi::CString::new(config).unwrap();
         let log_level = ffi::CString::new(log_level.into_envoy_log_level()).unwrap();
         unsafe {
-            // TODO: actually use the above config once i have config loading set up
-            sys::run_engine(handle, config_cstr.as_ptr(), log_level.into_raw());
+            sys::run_engine(handle, config_cstr.as_ptr(), log_level.as_ptr());
         }
 
         let engine_running = context.engine_running.clone();
@@ -605,7 +621,7 @@ impl StreamCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const StreamCallbacks;
+        let http_callbacks = Box::from_raw(context as *mut StreamCallbacks);
         let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
         ((*http_callbacks).on_complete)(&(*http_callbacks).context, stream_intel);
         context
@@ -615,7 +631,7 @@ impl StreamCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const StreamCallbacks;
+        let http_callbacks = Box::from_raw(context as *mut StreamCallbacks);
         let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
         ((*http_callbacks).on_cancel)(&(*http_callbacks).context, stream_intel);
         context
@@ -625,7 +641,7 @@ impl StreamCallbacks {
         envoy_stream_intel: sys::envoy_stream_intel,
         context: *mut ffi::c_void,
     ) -> *mut ffi::c_void {
-        let http_callbacks = context as *const StreamCallbacks;
+        let http_callbacks = Box::from_raw(context as *mut StreamCallbacks);
         let stream_intel = StreamIntel::from_envoy_stream_intel(envoy_stream_intel);
         ((*http_callbacks).on_send_window_available)(&(*http_callbacks).context, stream_intel);
         context
@@ -790,13 +806,13 @@ pub enum ErrorCode {
 
 impl From<ErrorCode> for &'static str {
     fn from(error_code: ErrorCode) -> &'static str {
-	match error_code {
-	    ErrorCode::UndefinedError => "undefined_error",
-	    ErrorCode::StreamReset => "stream_reset",
-	    ErrorCode::ConnectionFailure => "connection_failure",
-	    ErrorCode::BufferLimitExceeded => "buffer_limit_exceeded",
-	    ErrorCode::RequestTimeout => "request_timeout",
-	}
+        match error_code {
+            ErrorCode::UndefinedError => "undefined_error",
+            ErrorCode::StreamReset => "stream_reset",
+            ErrorCode::ConnectionFailure => "connection_failure",
+            ErrorCode::BufferLimitExceeded => "buffer_limit_exceeded",
+            ErrorCode::RequestTimeout => "request_timeout",
+        }
     }
 }
 
@@ -888,8 +904,8 @@ impl Data {
     }
 
     fn into_envoy_data(self) -> sys::envoy_data {
-        let mut vec = mem::ManuallyDrop::new(self.0);
-        let ptr = vec.as_mut_ptr();
+        let vec = Box::new(self.0);
+        let data_ptr = vec.as_ptr();
         let length = vec.len();
 
         // TODO: this is leaking memory!
@@ -897,10 +913,14 @@ impl Data {
         // and can therefore release it later
         sys::envoy_data {
             length: length.try_into().unwrap(),
-            bytes: ptr,
-            release: Some(sys::envoy_noop_release),
-            context: ptr::null_mut(),
+            bytes: data_ptr,
+            release: Some(Data::release_data),
+            context: Box::into_raw(vec) as *mut ffi::c_void,
         }
+    }
+
+    unsafe extern "C" fn release_data(context: *mut ffi::c_void) {
+        let _ = Box::from_raw(context as *mut Vec<u8>);
     }
 }
 
@@ -969,11 +989,11 @@ impl TryFrom<Map> for BTreeMap<String, String> {
 }
 
 impl Map {
-    pub fn new_request_headers<S: AsRef<str>>(
+    pub fn new_request_headers(
         method: Method,
         scheme: Scheme,
-        authority: S,
-        path: S,
+        authority: impl AsRef<str>,
+        path: impl AsRef<str>,
     ) -> Self {
         Map::from(vec![
             (":method", method.into_envoy_method()),
@@ -998,20 +1018,27 @@ impl Map {
     }
 
     fn into_envoy_map(self) -> sys::envoy_map {
-        let mut envoy_map_entries = Vec::with_capacity(self.0.len());
-        for entry in self.0.into_iter() {
-            envoy_map_entries.push(sys::envoy_map_entry {
-                key: entry.0.into_envoy_data(),
-                value: entry.1.into_envoy_data(),
-            });
+        let length = self.0.len();
+        let layout = alloc::Layout::array::<sys::envoy_map_entry>(length)
+            .expect("failed to construct layout for envoy_map_entry block");
+        let memory;
+        unsafe {
+            memory = alloc::alloc(layout) as *mut sys::envoy_map_entry;
         }
 
-        let mut envoy_map_entries = mem::ManuallyDrop::new(envoy_map_entries);
-        let ptr = envoy_map_entries.as_mut_ptr();
-        let length = envoy_map_entries.len();
+        for (i, entry) in self.0.into_iter().enumerate() {
+            let envoy_entry = sys::envoy_map_entry {
+                key: entry.0.into_envoy_data(),
+                value: entry.1.into_envoy_data(),
+            };
+            unsafe {
+                (*memory.add(i)) = envoy_entry;
+            }
+        }
+
         sys::envoy_map {
             length: length.try_into().unwrap(),
-            entries: ptr,
+            entries: memory,
         }
     }
 }
@@ -1094,37 +1121,6 @@ impl Logger {
 
     unsafe extern "C" fn c_release(context: *const ffi::c_void) {
         let _ = Box::from_raw(context as *mut Logger);
-    }
-}
-
-// TODO: provide a context to this thing
-pub type EventTrackerTrack = fn(Map);
-
-struct EventTracker {
-    track: Option<EventTrackerTrack>,
-}
-
-impl Default for EventTracker {
-    fn default() -> Self {
-        Self { track: None }
-    }
-}
-
-impl EventTracker {
-    fn into_envoy_event_tracker(self) -> sys::envoy_event_tracker {
-        let event_tracker = Box::into_raw(Box::new(self));
-        sys::envoy_event_tracker {
-            track: Some(EventTracker::c_track),
-            context: event_tracker as *mut ffi::c_void,
-        }
-    }
-
-    unsafe extern "C" fn c_track(envoy_event: sys::envoy_map, context: *const ffi::c_void) {
-        let event_tracker = context as *const EventTracker;
-        let event = Map::from_envoy_map(envoy_event);
-        if let Some(track) = &(*event_tracker).track {
-            track(event);
-        }
     }
 }
 
