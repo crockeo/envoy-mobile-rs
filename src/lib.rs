@@ -28,34 +28,36 @@ mod tests {
 
     async fn make_request(engine: &Engine) {
         let mut stream = engine.new_stream(false);
-	stream.reset_stream();
-        // stream.send_headers(
-        //     Headers::new_request_headers(
-        //         bridge::Method::Get,
-        //         bridge::Scheme::Http,
-        //         "localhost:8080",
-        //         "/",
-        //     ),
-        //     true,
-        // );
+        stream.send_headers(
+            Headers::new_request_headers(
+                bridge::Method::Get,
+                bridge::Scheme::Http,
+                "localhost:8080",
+                "/",
+            ),
+            true,
+        );
 
-        // while let Some(headers) = stream.headers().poll().await {
-        //     let headers = HashMap::<String, String>::try_from(headers).unwrap();
-        //     if let Some(status) = headers.get(":status") {
-        //         assert_eq!(status, "200");
-        //     }
-        //     for (key, value) in headers.into_iter() {
-        //         println!("{}: {}", key, value);
-        //     }
-        // }
+        while let Some(headers) = stream.headers().poll().await {
+            let headers = HashMap::<String, String>::try_from(headers).unwrap();
+            if let Some(status) = headers.get(":status") {
+                assert_eq!(status, "200");
+            }
+            for (key, value) in headers.into_iter() {
+                println!("{}: {}", key, value);
+            }
+        }
 
-        // while let Some(data) = stream.data().poll().await {
-        //     let data_str: &str = (&data).try_into().unwrap();
-        //     println!("{}", data_str);
-        // }
+        while let Some(data) = stream.data().poll().await {
+            let data_str: &str = (&data).try_into().unwrap();
+            println!("{}", data_str);
+        }
 
-        // let completion = stream.completion().poll().await;
-        // assert_eq!(completion, Some(Completion::Complete));
+        while let Some(_) = stream.trailers().poll().await {}
+        while let Some(_) = stream.metadata().poll().await {}
+
+        let completion = stream.completion().poll().await;
+        assert_eq!(completion, Some(Completion::Complete));
     }
 
     #[test]
@@ -81,7 +83,7 @@ mod tests {
             .build(LogLevel::Error)
             .await;
 
-        for _ in 0..1 {
+        for _ in 0..50 {
             make_request(&engine).await;
         }
 

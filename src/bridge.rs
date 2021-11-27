@@ -890,11 +890,10 @@ impl From<Data> for Vec<u8> {
 
 impl Data {
     unsafe fn from_envoy_data_no_release(envoy_data: &sys::envoy_data) -> Self {
-        let length = envoy_data.length.try_into().unwrap();
-        let layout = alloc::Layout::array::<u8>(length).unwrap();
-        let bytes = alloc::alloc(layout);
-        ptr::copy(envoy_data.bytes, bytes, length);
-        Self(Vec::from_raw_parts(bytes, length, length))
+	let length = envoy_data.length.try_into().unwrap();
+	let mut bytes = vec![0; length];
+	ptr::copy(envoy_data.bytes, bytes.as_mut_ptr(), length);
+	Self(bytes)
     }
 
     unsafe fn from_envoy_data(envoy_data: sys::envoy_data) -> Self {
