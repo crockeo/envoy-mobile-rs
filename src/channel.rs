@@ -24,9 +24,8 @@ impl<T> Default for Channel<T> {
 
 impl<T> Channel<T> {
     fn put_impl(&self, value: Option<T>) {
+	let mut wakers_guard = self.wakers.lock().unwrap();
         self.tx.send(value).expect("failed to send over Channel");
-
-        let mut wakers_guard = self.wakers.lock().unwrap();
         if wakers_guard.len() > 0 {
             wakers_guard.remove(0).wake();
         }
@@ -44,9 +43,9 @@ impl<T> Channel<T> {
         ChannelFuture(self)
     }
 
-    fn enqueue_waker(&self, waker: Waker) {
-        let mut wakers_guard = self.wakers.lock().unwrap();
-        wakers_guard.push(waker);
+    fn with_wakers<U>(&self, func: impl FnOnce(&mut Vec<Waker>) -> U) -> U {
+	let mut guard = self.wakers.lock().unwrap();
+	func(&mut *guard)
     }
 }
 
@@ -68,12 +67,14 @@ impl<'a, T> Future for ChannelFuture<'a, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.0.rx.try_recv() {
-            Ok(value) => Poll::Ready(value),
-            Err(_) => {
-                self.0.enqueue_waker(ctx.waker().clone());
-                Poll::Pending
-            }
-        }
+	self.0.with_wakers(|wakers| {
+	    match self.0.rx.try_recv() {
+		Ok(value) => Poll::Ready(value),
+		Err(_) => {
+		    wakers.push(ctx.waker().clone());
+		    Poll::Pending
+		}
+	    }
+	})
     }
 }

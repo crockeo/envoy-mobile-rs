@@ -147,6 +147,7 @@ async fn request_impl(
     // TODO: populate headers with metadata and trailers?
 
     // TODO: check for error here
+
     match stream.completion().poll().await.unwrap() {
         crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
 
@@ -246,24 +247,24 @@ where
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-	let mut borrow = self.inner.borrow_mut();
-	let inner: &mut T = &mut *borrow;
+        let mut borrow = self.inner.borrow_mut();
+        let inner: &mut T = &mut *borrow;
 
-	let pin;
-	unsafe {
-	    pin = Pin::new_unchecked(inner);
-	}
-	let result = pin.poll(ctx);
+        let pin;
+        unsafe {
+            pin = Pin::new_unchecked(inner);
+        }
+        let result = pin.poll(ctx);
         match result {
             Poll::Pending => Poll::Pending,
 
             Poll::Ready(Ok(result)) => {
-                let _ = Python::with_gil(|py| self.wake_func.call(py, (result,), None));
+                let result = Python::with_gil(|py| self.wake_func.call(py, (result,), None));
                 Poll::Ready(())
             }
 
             Poll::Ready(Err(e)) => {
-                let _ = Python::with_gil(|py| self.wake_func.call(py, (e,), None));
+                let result = Python::with_gil(|py| self.wake_func.call(py, (e,), None));
                 Poll::Ready(())
             }
         }
