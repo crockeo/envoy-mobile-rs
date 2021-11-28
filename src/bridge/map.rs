@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, HashMap};
 use crate::bridge::{Data, Method, Scheme};
 use crate::sys;
 
+/// Data wrapper used to convert to/from envoy_map.
+/// Should not be used directly when possible.
 #[derive(Debug)]
 pub struct Map(Vec<(Data, Data)>);
 

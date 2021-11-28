@@ -5,6 +5,8 @@ use std::string::FromUtf8Error;
 
 use crate::sys;
 
+/// Data wrapper used to convert to/from envoy_data.
+/// Should not be used directly when possible.
 #[derive(Eq, Clone, Debug, PartialEq)]
 pub struct Data(Vec<u8>);
 
