@@ -7,9 +7,6 @@ use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 use std::sync::Arc;
 
-#[cfg(python)]
-use pyo3::prelude::*;
-
 use crate::channel::{Channel, ReadOnlyChannel};
 use crate::event::{Event, EventFuture};
 use crate::sys;
@@ -26,7 +23,7 @@ use crate::sys;
 //   a la string views
 
 #[derive(Clone)]
-pub struct EngineContext {
+struct EngineContext {
     engine_running: Arc<Event>,
     engine_terminated: Arc<Event>,
 }
@@ -40,9 +37,9 @@ impl Default for EngineContext {
     }
 }
 
-pub type OnEngineRunning = fn(&EngineContext);
-pub type OnExit = fn(&EngineContext);
-pub type EventTrack = fn(Map);
+type OnEngineRunning = fn(&EngineContext);
+type OnExit = fn(&EngineContext);
+type EventTrack = fn(Map);
 
 struct EngineCallbacks {
     on_engine_running: OnEngineRunning,
@@ -443,7 +440,7 @@ pub enum Completion {
     Error(Error),
 }
 
-pub struct StreamContext {
+struct StreamContext {
     headers: Channel<Headers>,
     data: Channel<Data>,
     metadata: Channel<Headers>,
@@ -476,14 +473,14 @@ impl StreamContext {
     }
 }
 
-pub type OnHeaders = fn(&StreamContext, Headers, bool, StreamIntel);
-pub type OnData = fn(&StreamContext, Data, bool, StreamIntel);
-pub type OnMetadata = fn(&StreamContext, Headers, StreamIntel);
-pub type OnTrailers = fn(&StreamContext, Headers, StreamIntel);
-pub type OnError = fn(&StreamContext, Error, StreamIntel);
-pub type OnComplete = fn(&StreamContext, StreamIntel);
-pub type OnCancel = fn(&StreamContext, StreamIntel);
-pub type OnSendWindowAvailable = fn(&StreamContext, StreamIntel);
+type OnHeaders = fn(&StreamContext, Headers, bool, StreamIntel);
+type OnData = fn(&StreamContext, Data, bool, StreamIntel);
+type OnMetadata = fn(&StreamContext, Headers, StreamIntel);
+type OnTrailers = fn(&StreamContext, Headers, StreamIntel);
+type OnError = fn(&StreamContext, Error, StreamIntel);
+type OnComplete = fn(&StreamContext, StreamIntel);
+type OnCancel = fn(&StreamContext, StreamIntel);
+type OnSendWindowAvailable = fn(&StreamContext, StreamIntel);
 
 struct StreamCallbacks {
     on_headers: OnHeaders,
@@ -733,20 +730,6 @@ impl Stream {
     }
 }
 
-#[cfg(python)]
-#[pyclass]
-#[derive(Clone, Copy)]
-pub enum LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-    Critical,
-    Off,
-}
-
-#[cfg(not(python))]
 #[derive(Clone, Copy)]
 pub enum LogLevel {
     Trace,
@@ -786,17 +769,6 @@ impl Status {
     }
 }
 
-#[cfg(python)]
-#[pyclass]
-#[derive(Clone, Copy)]
-pub enum HistogramStatUnit {
-    Unspecified,
-    Bytes,
-    Microseconds,
-    Milliseconds,
-}
-
-#[cfg(not(python))]
 #[derive(Clone, Copy)]
 pub enum HistogramStatUnit {
     Unspecified,
@@ -816,18 +788,6 @@ impl HistogramStatUnit {
     }
 }
 
-#[cfg(python)]
-#[pyclass]
-#[derive(Copy, Debug, Clone, PartialEq)]
-pub enum ErrorCode {
-    UndefinedError,
-    StreamReset,
-    ConnectionFailure,
-    BufferLimitExceeded,
-    RequestTimeout,
-}
-
-#[cfg(not(python))]
 #[derive(Copy, Debug, Clone, PartialEq)]
 pub enum ErrorCode {
     UndefinedError,
@@ -1075,19 +1035,6 @@ impl Map {
 pub type Headers = Map;
 pub type StatsTags = Map;
 
-#[cfg(python)]
-#[pyclass]
-#[derive(Clone, Debug, PartialEq)]
-pub struct Error {
-    #[pyo3(get)]
-    error_code: ErrorCode,
-    #[pyo3(get)]
-    message: String,
-    #[pyo3(get)]
-    attempt_count: i32,
-}
-
-#[cfg(not(python))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Error {
     error_code: ErrorCode,
@@ -1127,7 +1074,7 @@ impl StreamIntel {
 }
 
 // TODO: provide a context to this thing
-pub type LoggerLog = fn(Data);
+type LoggerLog = fn(Data);
 
 struct Logger {
     log: Option<LoggerLog>,
