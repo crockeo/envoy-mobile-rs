@@ -1,3 +1,43 @@
+/*!
+Provides both a high-level and a low-level interface to envoy-mobile.
+The high-level interface lives on the top-level of the library:
+
+```rust
+let response = Response::new(Method::GET, "http://localhost:8080")?
+    .send()
+    .await?;
+
+println!("{} {:?} {:?}", response.status, response.headers. response.data);
+```
+
+And the low-level interface lives under [bridge]:
+
+```rust
+let engine = EngineBuilder::default()
+    .build(LogLevel::Error)
+    .await;
+
+let mut stream = engine.new_stream(false);
+stream.send_headers(
+    Headers::new_request_headers(
+        Method::Get,
+        Scheme::Http,
+        "localhost:8080",
+        "/",
+    ),
+    true,
+);
+
+while let Some(headers) = stream.headers().poll().await { /* ... */ }
+while let Some(data) = stream.data().poll().await { /* ... */ }
+while let Some(_) = stream.trailers().poll().await { /* ... */ }
+while let Some(_) = stream.metadata().poll().await { /* ... */ }
+stream.completion().poll().await;
+
+engine.terminate().await;
+```
+*/
+
 pub mod bridge;
 mod channel;
 mod event;
@@ -94,9 +134,11 @@ impl Request {
             .completion()
             .poll()
             .await
-            .expect("stream must complete")
+	    .ok_or_else(|| "stream must complete")?
         {
-            _ => {}
+	    bridge::Completion::Cancel => return Err("stream cancelled"),
+	    bridge::Completion::Error(_) => return Err("stream errored"),
+	    bridge::Completion::Complete => {},
         }
 
         let mut flat_headers = HashMap::<String, String>::new();
