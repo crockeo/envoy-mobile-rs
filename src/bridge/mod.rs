@@ -1,10 +1,8 @@
 mod data;
+mod map;
 
-use std::alloc;
-use std::collections::{BTreeMap, HashMap};
 use std::ffi;
 use std::net::{IpAddr, Ipv4Addr};
-use std::string::FromUtf8Error;
 use std::sync::Arc;
 
 use crate::channel::{Channel, ReadOnlyChannel};
@@ -12,6 +10,7 @@ use crate::event::{Event, EventFuture};
 use crate::sys;
 
 pub use data::*;
+pub use map::*;
 
 // some things i don't like and want to work on
 //
@@ -839,129 +838,6 @@ impl Network {
         }
     }
 }
-
-
-#[derive(Debug)]
-pub struct Map(Vec<(Data, Data)>);
-
-impl<S: AsRef<str>> From<Vec<(S, S)>> for Map
-where
-    Data: From<S>,
-{
-    fn from(pairs: Vec<(S, S)>) -> Self {
-        let mut entries = Vec::with_capacity(pairs.len());
-        for (key, value) in pairs.into_iter() {
-            entries.push((Data::from(key), Data::from(value)));
-        }
-        Map(entries)
-    }
-}
-
-impl From<HashMap<String, String>> for Map {
-    fn from(hash_map: HashMap<String, String>) -> Self {
-        let mut pairs = Vec::with_capacity(hash_map.len());
-        for (key, value) in hash_map.into_iter() {
-            pairs.push((Data::from(key), Data::from(value)));
-        }
-        Map(pairs)
-    }
-}
-
-impl TryFrom<Map> for Vec<(String, String)> {
-    type Error = FromUtf8Error;
-
-    fn try_from(map: Map) -> Result<Vec<(String, String)>, Self::Error> {
-        let mut pairs = Vec::with_capacity(map.0.len());
-        for (key, value) in map.0.into_iter() {
-            pairs.push((key.try_into()?, value.try_into()?));
-        }
-        Ok(pairs)
-    }
-}
-
-impl TryFrom<Map> for HashMap<String, String> {
-    type Error = FromUtf8Error;
-
-    fn try_from(map: Map) -> Result<HashMap<String, String>, Self::Error> {
-        let pairs = Vec::<(String, String)>::try_from(map)?;
-        let mut hash_map = HashMap::new();
-        for (key, value) in pairs.into_iter() {
-            hash_map.insert(key, value);
-        }
-        Ok(hash_map)
-    }
-}
-
-impl TryFrom<Map> for BTreeMap<String, String> {
-    type Error = FromUtf8Error;
-
-    fn try_from(map: Map) -> Result<BTreeMap<String, String>, Self::Error> {
-        let pairs = Vec::<(String, String)>::try_from(map)?;
-        let mut btree_map = BTreeMap::new();
-        for (key, value) in pairs.into_iter() {
-            btree_map.insert(key, value);
-        }
-        Ok(btree_map)
-    }
-}
-
-impl Map {
-    pub fn new_request_headers(
-        method: Method,
-        scheme: Scheme,
-        authority: impl AsRef<str>,
-        path: impl AsRef<str>,
-    ) -> Self {
-        Map::from(vec![
-            (":method", method.into_envoy_method()),
-            (":scheme", scheme.into_envoy_scheme()),
-            (":authority", authority.as_ref()),
-            (":path", path.as_ref()),
-        ])
-    }
-
-    unsafe fn from_envoy_map(envoy_map: sys::envoy_map) -> Self {
-        let length = envoy_map.length.try_into().unwrap();
-        let mut entries = Vec::with_capacity(length);
-        for i in 0..length {
-            let entry = &*envoy_map.entries.add(i);
-            entries.push((
-                Data::from_envoy_data_no_release(&entry.key),
-                Data::from_envoy_data_no_release(&entry.value),
-            ));
-        }
-        sys::release_envoy_map(envoy_map);
-        Self(entries)
-    }
-
-    fn into_envoy_map(self) -> sys::envoy_map {
-        let length = self.0.len();
-        let layout = alloc::Layout::array::<sys::envoy_map_entry>(length)
-            .expect("failed to construct layout for envoy_map_entry block");
-        let memory;
-        unsafe {
-            memory = alloc::alloc(layout) as *mut sys::envoy_map_entry;
-        }
-
-        for (i, entry) in self.0.into_iter().enumerate() {
-            let envoy_entry = sys::envoy_map_entry {
-                key: entry.0.into_envoy_data(),
-                value: entry.1.into_envoy_data(),
-            };
-            unsafe {
-                (*memory.add(i)) = envoy_entry;
-            }
-        }
-
-        sys::envoy_map {
-            length: length.try_into().unwrap(),
-            entries: memory,
-        }
-    }
-}
-
-pub type Headers = Map;
-pub type StatsTags = Map;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Error {
