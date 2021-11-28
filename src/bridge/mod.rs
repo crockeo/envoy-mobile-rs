@@ -897,9 +897,9 @@ impl Network {
 /// Provided in [Completion::Error] upon stream completion.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Error {
-    error_code: ErrorCode,
-    message: String,
-    attempt_count: i32,
+    pub error_code: ErrorCode,
+    pub message: String,
+    pub attempt_count: i32,
 }
 
 impl Error {

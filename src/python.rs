@@ -5,7 +5,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Once};
 use std::task::{Context, Poll};
 
-use futures::executor;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
@@ -13,17 +12,28 @@ use pyo3::types::PyFunction;
 use tokio::runtime::Runtime as TokioRuntime;
 use url::Url;
 
-static mut ENGINE_INSTANCE: Option<Arc<crate::Engine>> = None;
-static ENGINE_INSTANCE_INIT: Once = Once::new();
-
 static mut TOKIO_RUNTIME: Option<TokioRuntime> = None;
 static TOKIO_RUNTIME_INIT: Once = Once::new();
+
+fn tokio_runtime() -> &'static TokioRuntime {
+    unsafe {
+	TOKIO_RUNTIME_INIT.call_once(|| {
+	    TOKIO_RUNTIME = Some(TokioRuntime::new().unwrap());
+	});
+
+	TOKIO_RUNTIME.as_ref().unwrap()
+    }
+}
+
+static mut ENGINE_INSTANCE: Option<Arc<crate::Engine>> = None;
+static ENGINE_INSTANCE_INIT: Once = Once::new();
 
 fn engine_instance() -> Arc<crate::Engine> {
     unsafe {
         // TODO: provide an interface to configure the engine instance
         ENGINE_INSTANCE_INIT.call_once(|| {
-            ENGINE_INSTANCE = Some(executor::block_on(
+	    let tokio_runtime = tokio_runtime();
+            ENGINE_INSTANCE = Some(tokio_runtime.block_on(
                 crate::EngineBuilder::default()
                     .with_log(|data| {
                         print!("{}", String::try_from(data).unwrap());
@@ -33,16 +43,6 @@ fn engine_instance() -> Arc<crate::Engine> {
         });
 
 	ENGINE_INSTANCE.clone().unwrap()
-    }
-}
-
-fn tokio_runtime() -> &'static TokioRuntime {
-    unsafe {
-	TOKIO_RUNTIME_INIT.call_once(|| {
-	    TOKIO_RUNTIME = Some(TokioRuntime::new().unwrap());
-	});
-
-	TOKIO_RUNTIME.as_ref().unwrap()
     }
 }
 
@@ -75,7 +75,26 @@ struct StreamErroredInformation {
     #[pyo3(get)]
     partial_response: Response,
     #[pyo3(get)]
-    envoy_error: crate::Error,
+    error: Error,
+}
+
+#[pyclass(name = "Error")]
+#[derive(Clone)]
+struct Error {
+    error_name: String,
+    message: String,
+    attempt_count: i32,
+}
+
+impl From<crate::Error> for Error {
+    fn from(error: crate::Error) -> Self {
+	let error_name: &str = error.error_code.into();
+	Self {
+	    error_name: error_name.to_owned(),
+	    message: error.message,
+	    attempt_count: error.attempt_count,
+	}
+    }
 }
 
 #[pyfunction]
@@ -86,7 +105,8 @@ pub fn request(
     headers: Option<HashMap<String, String>>,
 ) -> PyResult<Response> {
     let engine = engine_instance();
-    executor::block_on(request_impl(engine, method, url, data, headers))
+    let tokio_runtime = tokio_runtime();
+    tokio_runtime.block_on(request_impl(engine, method, url, data, headers))
 }
 
 #[pyfunction]
@@ -169,7 +189,7 @@ async fn request_impl(
         crate::Completion::Error(envoy_error) => {
             Err(StreamErrored::new_err(StreamErroredInformation {
                 partial_response: response,
-                envoy_error,
+                error: Error::from(envoy_error),
             }))
         }
     }
