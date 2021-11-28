@@ -7,6 +7,7 @@ use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 use std::sync::Arc;
 
+#[cfg(python)]
 use pyo3::prelude::*;
 
 use crate::channel::{Channel, ReadOnlyChannel};
@@ -732,7 +733,20 @@ impl Stream {
     }
 }
 
+#[cfg(python)]
 #[pyclass]
+#[derive(Clone, Copy)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Critical,
+    Off,
+}
+
+#[cfg(not(python))]
 #[derive(Clone, Copy)]
 pub enum LogLevel {
     Trace,
@@ -772,7 +786,17 @@ impl Status {
     }
 }
 
+#[cfg(python)]
 #[pyclass]
+#[derive(Clone, Copy)]
+pub enum HistogramStatUnit {
+    Unspecified,
+    Bytes,
+    Microseconds,
+    Milliseconds,
+}
+
+#[cfg(not(python))]
 #[derive(Clone, Copy)]
 pub enum HistogramStatUnit {
     Unspecified,
@@ -792,7 +816,18 @@ impl HistogramStatUnit {
     }
 }
 
+#[cfg(python)]
 #[pyclass]
+#[derive(Copy, Debug, Clone, PartialEq)]
+pub enum ErrorCode {
+    UndefinedError,
+    StreamReset,
+    ConnectionFailure,
+    BufferLimitExceeded,
+    RequestTimeout,
+}
+
+#[cfg(not(python))]
 #[derive(Copy, Debug, Clone, PartialEq)]
 pub enum ErrorCode {
     UndefinedError,
@@ -1040,6 +1075,7 @@ impl Map {
 pub type Headers = Map;
 pub type StatsTags = Map;
 
+#[cfg(python)]
 #[pyclass]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Error {
@@ -1048,6 +1084,14 @@ pub struct Error {
     #[pyo3(get)]
     message: String,
     #[pyo3(get)]
+    attempt_count: i32,
+}
+
+#[cfg(not(python))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Error {
+    error_code: ErrorCode,
+    message: String,
     attempt_count: i32,
 }
 
@@ -1067,9 +1111,9 @@ impl Error {
 
 #[derive(Debug)]
 pub struct StreamIntel {
-    stream_id: i64,
-    connection_id: i64,
-    attempt_count: u64,
+    pub stream_id: i64,
+    pub connection_id: i64,
+    pub attempt_count: u64,
 }
 
 impl StreamIntel {
