@@ -209,7 +209,7 @@ fn engine_instance() -> Arc<bridge::Engine> {
                     .with_log(|data| {
                         print!("{}", String::try_from(data).unwrap());
                     })
-                    .build(bridge::LogLevel::Debug),
+                    .build(bridge::LogLevel::Error),
             ))
         });
 

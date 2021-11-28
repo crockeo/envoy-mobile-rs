@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Once};
+use std::sync::Once;
 use std::task::{Context, Poll};
 
 use pyo3::create_exception;
@@ -19,32 +19,11 @@ static TOKIO_RUNTIME_INIT: Once = Once::new();
 
 fn tokio_runtime() -> &'static TokioRuntime {
     unsafe {
-	TOKIO_RUNTIME_INIT.call_once(|| {
-	    TOKIO_RUNTIME = Some(TokioRuntime::new().unwrap());
-	});
-
-	TOKIO_RUNTIME.as_ref().unwrap()
-    }
-}
-
-static mut ENGINE_INSTANCE: Option<Arc<bridge::Engine>> = None;
-static ENGINE_INSTANCE_INIT: Once = Once::new();
-
-fn engine_instance() -> Arc<bridge::Engine> {
-    unsafe {
-        // TODO: provide an interface to configure the engine instance
-        ENGINE_INSTANCE_INIT.call_once(|| {
-	    let tokio_runtime = tokio_runtime();
-            ENGINE_INSTANCE = Some(tokio_runtime.block_on(
-                bridge::EngineBuilder::default()
-                    .with_log(|data| {
-                        print!("{}", String::try_from(data).unwrap());
-                    })
-                    .build(bridge::LogLevel::Error),
-            ))
+        TOKIO_RUNTIME_INIT.call_once(|| {
+            TOKIO_RUNTIME = Some(TokioRuntime::new().unwrap());
         });
 
-	ENGINE_INSTANCE.clone().unwrap()
+        TOKIO_RUNTIME.as_ref().unwrap()
     }
 }
 
@@ -52,19 +31,19 @@ fn engine_instance() -> Arc<bridge::Engine> {
 #[derive(Clone)]
 pub struct Response {
     #[pyo3(get)]
-    status_code: u16,
+    status: usize,
     #[pyo3(get)]
     headers: HashMap<String, String>,
     #[pyo3(get)]
-    body: Vec<u8>,
+    data: Vec<u8>,
 }
 
 impl Default for Response {
     fn default() -> Self {
         Self {
-            status_code: 0,
+            status: 0,
             headers: HashMap::new(),
-            body: Vec::new(),
+            data: Vec::new(),
         }
     }
 }
@@ -90,12 +69,12 @@ struct Error {
 
 impl From<bridge::Error> for Error {
     fn from(error: bridge::Error) -> Self {
-	let error_name: &str = error.error_code.into();
-	Self {
-	    error_name: error_name.to_owned(),
-	    message: error.message,
-	    attempt_count: error.attempt_count,
-	}
+        let error_name: &str = error.error_code.into();
+        Self {
+            error_name: error_name.to_owned(),
+            message: error.message,
+            attempt_count: error.attempt_count,
+        }
     }
 }
 
@@ -106,9 +85,8 @@ pub fn request(
     data: Option<Vec<u8>>,
     headers: Option<HashMap<String, String>>,
 ) -> PyResult<Response> {
-    let engine = engine_instance();
     let tokio_runtime = tokio_runtime();
-    tokio_runtime.block_on(request_impl(engine, method, url, data, headers))
+    tokio_runtime.block_on(request_impl(method, url, data, headers))
 }
 
 #[pyfunction]
@@ -119,13 +97,12 @@ pub fn async_request(
     headers: Option<HashMap<String, String>>,
     callback: &PyFunction,
 ) -> PyResult<()> {
-    let engine = engine_instance();
     let callback: PyObject = callback.into();
 
-    let request_promise = request_impl(engine, method, url, data, headers);
+    let request_promise = request_impl(method, url, data, headers);
     let py_future = PyFuture {
-	wake_func: callback,
-	inner: RefCell::new(request_promise),
+        wake_func: callback,
+        inner: RefCell::new(request_promise),
     };
     tokio_runtime().spawn(py_future);
 
@@ -133,98 +110,33 @@ pub fn async_request(
 }
 
 async fn request_impl(
-    engine: Arc<bridge::Engine>,
     method: impl AsRef<str>,
     url: impl AsRef<str>,
     data: Option<Vec<u8>>,
     headers: Option<HashMap<String, String>>,
 ) -> PyResult<Response> {
-    let mut stream = engine.new_stream(false);
-
     let method = normalize_method(method.as_ref())?;
-    let (scheme, authority, path) = normalize_url(url.as_ref())?;
     let (data, mut additional_headers) = normalize_data(data)?;
-
-    let extra_headers = vec![
-        (":method", method.into_envoy_method()),
-        (":scheme", scheme.into_envoy_scheme()),
-        (":authority", &authority),
-        (":path", &path),
-    ];
-    for (key, value) in extra_headers.into_iter() {
-        additional_headers.insert(key.to_string(), value.to_string());
-    }
-
     let headers = normalize_headers(headers, additional_headers)?;
 
-    // TODO: allow chunked sending things over the wire
-    // and/or sending trailers and metadata
-    stream.send_headers(headers, data.len() == 0);
-    if data.len() > 0 {
-        stream.send_data(data, true);
-    }
+    let response = crate::Request::new(method, url)
+        .map_err(|e| PyException::new_err(e))?
+        .with_headers(headers)
+        .with_data(data)
+        .send()
+        .await
+        .map_err(|e| PyException::new_err(e))?;
 
-    let mut response = Response::default();
-    while let Some(headers_block) = stream.headers().poll().await {
-        // TODO: check for error here
-        let mut headers_block = HashMap::<String, String>::try_from(headers_block).unwrap();
-        if let Some(status) = headers_block.remove(":status") {
-            // TODO: check for error here
-            response.status_code = str::parse::<u16>(&status).unwrap();
-        }
-        response.headers.extend(headers_block.into_iter());
-    }
-
-    while let Some(body_block) = stream.data().poll().await {
-        response.body.extend(Vec::<u8>::from(body_block));
-    }
-
-    // TODO: populate headers with metadata and trailers?
-
-    // TODO: check for error here
-
-    match stream.completion().poll().await.unwrap() {
-        bridge::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
-
-        bridge::Completion::Complete => Ok(response),
-
-        bridge::Completion::Error(envoy_error) => {
-            Err(StreamErrored::new_err(StreamErroredInformation {
-                partial_response: response,
-                error: Error::from(envoy_error),
-            }))
-        }
-    }
+    Ok(Response {
+        status: response.status,
+        headers: response.headers,
+        data: response.data,
+    })
 }
 
 fn normalize_method(method: &str) -> PyResult<bridge::Method> {
     bridge::Method::try_from(method)
         .map_err(|_| PyValueError::new_err(format!("invalid method '{}'", method)))
-}
-
-fn normalize_url(url: &str) -> PyResult<(bridge::Scheme, String, String)> {
-    let url =
-        Url::parse(url).map_err(|_| PyValueError::new_err(format!("invalid URL '{}'", url)))?;
-
-    let scheme = bridge::Scheme::try_from(url.scheme())
-        .map_err(|_| PyValueError::new_err(format!("invalid scheme '{}'", url.scheme())))?;
-
-    let authority = url
-        .host_str()
-        .ok_or_else(|| PyValueError::new_err(format!("URL must contain host '{}'", url)))?;
-    let authority = if let Some(port) = url.port() {
-        format!("{}:{}", authority, port)
-    } else {
-        authority.to_string()
-    };
-
-    let path = if let Some(query) = url.query() {
-        format!("{}?{}", url.path(), query)
-    } else {
-        url.path().to_string()
-    };
-
-    Ok((scheme, authority, path))
 }
 
 fn normalize_data(data: Option<Vec<u8>>) -> PyResult<(Vec<u8>, HashMap<String, String>)> {
@@ -243,9 +155,6 @@ fn normalize_data(data: Option<Vec<u8>>) -> PyResult<(Vec<u8>, HashMap<String, S
     if is_utf8 {
         headers.insert("charset".to_string(), "utf8".to_string());
     }
-    if data.len() > 0 {
-        headers.insert("content-length".to_string(), format!("{}", data.len()));
-    }
 
     Ok((data, headers))
 }
@@ -254,8 +163,6 @@ fn normalize_headers(
     headers: Option<HashMap<String, String>>,
     additional_headers: HashMap<String, String>,
 ) -> PyResult<HashMap<String, String>> {
-    // NOTE: yes this is obviously inefficient
-    // but it's functionality is obvious
     let mut final_headers = HashMap::new();
     for (key, value) in additional_headers {
         final_headers.insert(key, value);

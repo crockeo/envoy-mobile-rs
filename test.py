@@ -7,7 +7,7 @@ from benchmark import GeventChannel
 
 
 def print_response(response: envoy_mobile.Response):
-    print(response.status_code)
+    print(response.status)
     print(response.headers)
     print(bytes(response.body))
 
