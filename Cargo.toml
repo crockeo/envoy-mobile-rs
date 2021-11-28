@@ -7,26 +7,19 @@ edition = "2021"
 name = "envoy_mobile"
 crate-type = ["cdylib", "rlib"]
 
-[features]
-default = []
-all = ["python"]
-python = ["futures", "tokio"]
-
 [dependencies]
-futures = { version = "0.3.*", optional = true }
-tokio = { version = "1.*", features = ["macros", "rt-multi-thread", "test-util"], optional = true }
+futures = "*"
+tokio = { version = "1.*", features = ["macros", "rt-multi-thread", "test-util"] }
 url = "2.*"
 
 [dependencies.pyo3]
 git = "https://github.com/pyo3/pyo3.git"
 rev = "f5f47bebcb5997c211c1b6b14139b0ff4e8478b5"
 features = ["extension-module"]
-optional = true
 
 [build-dependencies]
 bindgen = "0.59.1"
 pyo3-build-config = "0.15.1"
 
 [dev-dependencies]
-tokio = { version = "1.*", features = ["macros", "rt-multi-thread", "test-util"] }
 tokio-test = "*"
