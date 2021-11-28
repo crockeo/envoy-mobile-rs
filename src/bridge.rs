@@ -645,7 +645,7 @@ impl StreamCallbacks {
 }
 
 pub struct Stream {
-    engine: Arc<Engine>,
+    _engine: Arc<Engine>,
     handle: isize,
     context: Arc<StreamContext>,
 }
@@ -653,7 +653,7 @@ pub struct Stream {
 impl Stream {
     fn new(engine: Arc<Engine>, handle: isize, context: Arc<StreamContext>) -> Self {
         Self {
-	    engine,
+	    _engine: engine,
             handle,
             context,
         }
