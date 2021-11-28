@@ -26,8 +26,7 @@ mod tests {
         engine.terminate().await;
     }
 
-    async fn make_request(engine: &Engine) {
-        let mut stream = engine.new_stream(false);
+    async fn make_request(mut stream: Stream) {
         stream.send_headers(
             Headers::new_request_headers(
                 bridge::Method::Get,
@@ -69,7 +68,7 @@ mod tests {
             .build(LogLevel::Error)
             .await;
 
-        make_request(&engine).await;
+        make_request(engine.new_stream(false)).await;
 
         engine.terminate().await;
     }
@@ -83,8 +82,13 @@ mod tests {
             .build(LogLevel::Error)
             .await;
 
-        for _ in 0..50 {
-            make_request(&engine).await;
+        let mut requests = Vec::with_capacity(100);
+        for _ in 0..100 {
+            let stream = engine.new_stream(false);
+            requests.push(tokio::spawn(make_request(stream)));
+        }
+        for request in requests.into_iter() {
+            request.await.unwrap();
         }
 
         engine.terminate().await;

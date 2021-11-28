@@ -1,9 +1,7 @@
 use std::alloc;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi;
-use std::marker::PhantomData;
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ptr;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
@@ -241,7 +239,7 @@ impl EngineBuilder {
         self
     }
 
-    pub fn build(self, log_level: LogLevel) -> EventFuture<Engine> {
+    pub fn build(self, log_level: LogLevel) -> EventFuture<Arc<Engine>> {
         let context = EngineContext::default();
         let (envoy_callbacks, envoy_event_tracker) =
             EngineCallbacks::new(context.clone()).into_envoy_engine_callbacks();
@@ -298,7 +296,7 @@ impl EngineBuilder {
         }
 
         let engine_running = context.engine_running.clone();
-        EventFuture::new(Engine { handle, context }, engine_running)
+        EventFuture::new(Arc::new(Engine { handle, context }), engine_running)
     }
 }
 
@@ -308,7 +306,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new_stream(&'_ self, explicit_flow_control: bool) -> Stream<'_> {
+    pub fn new_stream(self: &Arc<Self>, explicit_flow_control: bool) -> Stream {
         let handle;
         unsafe {
             handle = sys::init_stream(self.handle);
@@ -324,10 +322,10 @@ impl Engine {
             );
         }
 
-        Stream::new(handle, stream_context)
+        Stream::new(self.clone(), handle, stream_context)
     }
 
-    pub fn record_counter_inc<S: AsRef<str>>(&self, elements: S, tags: StatsTags, count: usize) {
+    pub fn record_counter_inc<S: AsRef<str>>(self: &Arc<Self>, elements: S, tags: StatsTags, count: usize) {
         let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
@@ -342,7 +340,7 @@ impl Engine {
         }
     }
 
-    pub fn record_gauge_set<S: AsRef<str>>(&self, elements: S, tags: StatsTags, value: usize) {
+    pub fn record_gauge_set<S: AsRef<str>>(self: &Arc<Self>, elements: S, tags: StatsTags, value: usize) {
         let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
@@ -357,7 +355,7 @@ impl Engine {
         }
     }
 
-    pub fn record_gauge_add<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+    pub fn record_gauge_add<S: AsRef<str>>(self: &Arc<Self>, elements: S, tags: StatsTags, amount: usize) {
         let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
@@ -372,7 +370,7 @@ impl Engine {
         }
     }
 
-    pub fn record_gauge_sub<S: AsRef<str>>(&self, elements: S, tags: StatsTags, amount: usize) {
+    pub fn record_gauge_sub<S: AsRef<str>>(self: &Arc<Self>, elements: S, tags: StatsTags, amount: usize) {
         let bytes = Vec::from_iter(elements.as_ref().bytes());
         let elements_cstr = ffi::CStr::from_bytes_with_nul(&bytes).unwrap();
 
@@ -388,7 +386,7 @@ impl Engine {
     }
 
     pub fn record_histogram_value<S: AsRef<str>>(
-        &self,
+        self: &Arc<Self>,
         elements: S,
         tags: StatsTags,
         amount: usize,
@@ -410,13 +408,13 @@ impl Engine {
         }
     }
 
-    pub fn flush_stats(&self) {
+    pub fn flush_stats(self: &Arc<Self>) {
         unsafe {
             sys::flush_stats(self.handle);
         }
     }
 
-    pub fn dump_stats(&self) -> Data {
+    pub fn dump_stats(self: &Arc<Self>) -> Data {
         let envoy_data;
         unsafe {
             envoy_data = sys::envoy_nodata;
@@ -428,12 +426,12 @@ impl Engine {
         }
     }
 
-    pub fn terminate(self) -> EventFuture<()> {
+    pub fn terminate(self: Arc<Self>) -> EventFuture<()> {
         unsafe {
             sys::drain_connections(self.handle);
             sys::terminate_engine(self.handle);
         }
-        EventFuture::new((), self.context.engine_terminated)
+        EventFuture::new((), self.context.engine_terminated.clone())
     }
 }
 
@@ -648,18 +646,18 @@ impl StreamCallbacks {
     }
 }
 
-pub struct Stream<'a> {
+pub struct Stream {
+    engine: Arc<Engine>,
     handle: isize,
     context: Arc<StreamContext>,
-    _lifetime: PhantomData<&'a ()>,
 }
 
-impl<'a> Stream<'a> {
-    fn new(handle: isize, context: Arc<StreamContext>) -> Self {
+impl Stream {
+    fn new(engine: Arc<Engine>, handle: isize, context: Arc<StreamContext>) -> Self {
         Self {
+	    engine,
             handle,
             context,
-            _lifetime: PhantomData,
         }
     }
 

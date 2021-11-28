@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use std::task::{Context, Poll};
 
 use futures::executor;
@@ -13,13 +13,13 @@ use pyo3::types::PyFunction;
 use tokio::runtime::Runtime as TokioRuntime;
 use url::Url;
 
-static mut ENGINE_INSTANCE: Option<crate::Engine> = None;
+static mut ENGINE_INSTANCE: Option<Arc<crate::Engine>> = None;
 static ENGINE_INSTANCE_INIT: Once = Once::new();
 
 static mut TOKIO_RUNTIME: Option<TokioRuntime> = None;
 static TOKIO_RUNTIME_INIT: Once = Once::new();
 
-fn engine_instance() -> &'static crate::Engine {
+fn engine_instance() -> Arc<crate::Engine> {
     unsafe {
         // TODO: provide an interface to configure the engine instance
         ENGINE_INSTANCE_INIT.call_once(|| {
@@ -32,7 +32,7 @@ fn engine_instance() -> &'static crate::Engine {
             ))
         });
 
-        ENGINE_INSTANCE.as_ref().unwrap()
+	ENGINE_INSTANCE.clone().unwrap()
     }
 }
 
@@ -100,7 +100,7 @@ pub fn async_request(
     let engine = engine_instance();
     let callback: PyObject = callback.into();
 
-    let request_promise = request_impl(&engine, method, url, data, headers);
+    let request_promise = request_impl(engine, method, url, data, headers);
     let py_future = PyFuture {
 	wake_func: callback,
 	inner: RefCell::new(request_promise),
@@ -111,7 +111,7 @@ pub fn async_request(
 }
 
 async fn request_impl(
-    engine: &crate::Engine,
+    engine: Arc<crate::Engine>,
     method: impl AsRef<str>,
     url: impl AsRef<str>,
     data: Option<Vec<u8>>,
