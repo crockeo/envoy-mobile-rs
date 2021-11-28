@@ -8,6 +8,7 @@ name = "envoy_mobile"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+futures = "*"
 tokio = { version = "1.*", features = ["macros", "rt-multi-thread", "test-util"] }
 url = "2.*"
 

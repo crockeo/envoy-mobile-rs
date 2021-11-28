@@ -12,6 +12,8 @@ use pyo3::types::PyFunction;
 use tokio::runtime::Runtime as TokioRuntime;
 use url::Url;
 
+use crate::bridge;
+
 static mut TOKIO_RUNTIME: Option<TokioRuntime> = None;
 static TOKIO_RUNTIME_INIT: Once = Once::new();
 
@@ -25,20 +27,20 @@ fn tokio_runtime() -> &'static TokioRuntime {
     }
 }
 
-static mut ENGINE_INSTANCE: Option<Arc<crate::Engine>> = None;
+static mut ENGINE_INSTANCE: Option<Arc<bridge::Engine>> = None;
 static ENGINE_INSTANCE_INIT: Once = Once::new();
 
-fn engine_instance() -> Arc<crate::Engine> {
+fn engine_instance() -> Arc<bridge::Engine> {
     unsafe {
         // TODO: provide an interface to configure the engine instance
         ENGINE_INSTANCE_INIT.call_once(|| {
 	    let tokio_runtime = tokio_runtime();
             ENGINE_INSTANCE = Some(tokio_runtime.block_on(
-                crate::EngineBuilder::default()
+                bridge::EngineBuilder::default()
                     .with_log(|data| {
                         print!("{}", String::try_from(data).unwrap());
                     })
-                    .build(crate::LogLevel::Error),
+                    .build(bridge::LogLevel::Error),
             ))
         });
 
@@ -86,8 +88,8 @@ struct Error {
     attempt_count: i32,
 }
 
-impl From<crate::Error> for Error {
-    fn from(error: crate::Error) -> Self {
+impl From<bridge::Error> for Error {
+    fn from(error: bridge::Error) -> Self {
 	let error_name: &str = error.error_code.into();
 	Self {
 	    error_name: error_name.to_owned(),
@@ -131,7 +133,7 @@ pub fn async_request(
 }
 
 async fn request_impl(
-    engine: Arc<crate::Engine>,
+    engine: Arc<bridge::Engine>,
     method: impl AsRef<str>,
     url: impl AsRef<str>,
     data: Option<Vec<u8>>,
@@ -182,11 +184,11 @@ async fn request_impl(
     // TODO: check for error here
 
     match stream.completion().poll().await.unwrap() {
-        crate::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
+        bridge::Completion::Cancel => Err(StreamCancelled::new_err("stream cancelled")),
 
-        crate::Completion::Complete => Ok(response),
+        bridge::Completion::Complete => Ok(response),
 
-        crate::Completion::Error(envoy_error) => {
+        bridge::Completion::Error(envoy_error) => {
             Err(StreamErrored::new_err(StreamErroredInformation {
                 partial_response: response,
                 error: Error::from(envoy_error),
@@ -195,16 +197,16 @@ async fn request_impl(
     }
 }
 
-fn normalize_method(method: &str) -> PyResult<crate::Method> {
-    crate::Method::try_from(method)
+fn normalize_method(method: &str) -> PyResult<bridge::Method> {
+    bridge::Method::try_from(method)
         .map_err(|_| PyValueError::new_err(format!("invalid method '{}'", method)))
 }
 
-fn normalize_url(url: &str) -> PyResult<(crate::Scheme, String, String)> {
+fn normalize_url(url: &str) -> PyResult<(bridge::Scheme, String, String)> {
     let url =
         Url::parse(url).map_err(|_| PyValueError::new_err(format!("invalid URL '{}'", url)))?;
 
-    let scheme = crate::Scheme::try_from(url.scheme())
+    let scheme = bridge::Scheme::try_from(url.scheme())
         .map_err(|_| PyValueError::new_err(format!("invalid scheme '{}'", url.scheme())))?;
 
     let authority = url

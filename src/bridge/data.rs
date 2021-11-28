@@ -11,6 +11,10 @@ use crate::sys;
 pub struct Data(Vec<u8>);
 
 impl Data {
+    pub fn len(&self) -> usize {
+	self.0.len()
+    }
+
     pub unsafe fn from_envoy_data_no_release(envoy_data: &sys::envoy_data) -> Self {
         let length = envoy_data.length.try_into().unwrap();
         let mut bytes = vec![0; length];
