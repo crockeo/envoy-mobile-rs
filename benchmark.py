@@ -91,21 +91,16 @@ class GeventChannel(Generic[T]):
     def __init__(self):
         self.hub = gevent.get_hub()
         self.watcher = self.hub.loop.async_()
-        self.lock = threading.Lock()
         self.values: List[T] = []
 
     def put(self, value: T) -> None:
-        with self.lock:
+        self.hub.loop.run_callback_threadsafe(self._put_impl, value)
+
+    def _put_impl(self, value: T) -> None:
             self.values.append(value)
             self.watcher.send()
 
     def get(self) -> T:
-        self.lock.acquire()
         while len(self.values) == 0:
-            self.lock.release()
             self.hub.wait(self.watcher)
-            self.lock.acquire()
-
-        value: T = self.values.pop(0)
-        self.lock.release()
-        return value
+        return self.values.pop(0)
