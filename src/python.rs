@@ -10,7 +10,6 @@ use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyFunction;
 use tokio::runtime::Runtime as TokioRuntime;
-use url::Url;
 
 use crate::bridge;
 
