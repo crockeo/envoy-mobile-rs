@@ -3,7 +3,6 @@ from __future__ import annotations
 from gevent import monkey
 monkey.patch_all()
 
-import threading
 from typing import Any
 from typing import Generic
 from typing import List
@@ -14,6 +13,7 @@ import envoy_mobile
 import gevent
 import pytest
 import requests
+from envoy_requests.gevent import request as envoy_request
 from gevent.pool import Group
 
 
@@ -33,7 +33,9 @@ def request_requests(
     body: str | bytes | None = None,
     headers: dict[str, str] | None = None,
 ) -> requests.Response:
-    return requests.request(method, url, data=body, headers=headers)
+    response = requests.request(method, url, data=body, headers=headers)
+    assert response.status_code == 200
+    return response
 
 
 session = requests.Session()
@@ -45,7 +47,9 @@ def request_requests_session(
     body: str | bytes | None = None,
     headers: dict[str, str] | None = None,
 ):
-    return session.request(method, url, data=body, headers=headers)
+    response = session.request(method, url, data=body, headers=headers)
+    assert response.status_code == 200
+    return response
 
 
 def request_envoy_mobile(
@@ -62,15 +66,29 @@ def request_envoy_mobile(
         headers,
         lambda response: channel.put(response),
     )
-    return channel.get()
+    response = channel.get()
+    assert response.status == 200
+    return response
+
+
+def request_envoy_requests(
+    method: str,
+    url: str,
+    body: str | bytes | None = None,
+    headers: dict[str, str] | None = None,
+):
+    response = envoy_request(method, url)
+    assert response.status_code == 200
+    return response
 
 
 @pytest.mark.parametrize(
     "impl",
     [
         pytest.param(request_requests, id="requests"),
-        pytest.param(request_requests_session, id="requests_session"),
-        pytest.param(request_envoy_mobile, id="envoy_requests"),
+        pytest.param(request_requests_session, id="requests-session"),
+        pytest.param(request_envoy_requests, id="envoy-requests"),
+        pytest.param(request_envoy_mobile, id="envoy-mobile-rs"),
     ],
 )
 @pytest.mark.parametrize("concurrent_requests", [1, 10, 100])
@@ -78,8 +96,9 @@ def test_performance(benchmark, impl, concurrent_requests):
     benchmark(
         measure_impl,
         impl,
-        ("GET", "http://127.0.0.1:8080", None, None),
+        ("GET", "http://127.0.0.1:8080/", None, None),
         # ("GET", "https://api.lyft.com/ping", None, None),
+        # ("GET", "https://www.google.com/", None, None),
         concurrent_requests,
     )
 
