@@ -115,64 +115,23 @@ async fn request_impl(
     data: Option<Vec<u8>>,
     headers: Option<HashMap<String, String>>,
 ) -> PyResult<Response> {
-    let method = normalize_method(method.as_ref())?;
-    let (data, mut additional_headers) = normalize_data(data)?;
-    let headers = normalize_headers(headers, additional_headers)?;
+    let method = bridge::Method::try_from(method.as_ref())
+        .map_err(|_| PyValueError::new_err(format!("invalid method '{}'", method.as_ref())))?;
 
-    let response = crate::Request::new(method, url)
-        .map_err(|e| PyException::new_err(e))?
-        .with_headers(headers)
-        .with_data(data)
-        .send()
-        .await
-        .map_err(|e| PyException::new_err(e))?;
+    let mut request = crate::Request::new(method, url).map_err(|e| PyException::new_err(e))?;
+    if let Some(headers) = headers {
+        request = request.with_headers(headers);
+    }
+    if let Some(data) = data {
+        request = request.with_data(data);
+    }
 
+    let response = request.send().await.map_err(|e| PyException::new_err(e))?;
     Ok(Response {
         status: response.status,
         headers: response.headers,
         data: response.data,
     })
-}
-
-fn normalize_method(method: &str) -> PyResult<bridge::Method> {
-    bridge::Method::try_from(method)
-        .map_err(|_| PyValueError::new_err(format!("invalid method '{}'", method)))
-}
-
-fn normalize_data(data: Option<Vec<u8>>) -> PyResult<(Vec<u8>, HashMap<String, String>)> {
-    let mut is_utf8 = false;
-    let data = match data {
-        None => Vec::<u8>::new(),
-        Some(data) => {
-            is_utf8 = std::str::from_utf8(&data).is_ok();
-            data
-        }
-    };
-
-    // TODO: do some kind of content sniffing (e.g. accept &PyAny?)
-    // in order to populate content-type
-    let mut headers = HashMap::<String, String>::new();
-    if is_utf8 {
-        headers.insert("charset".to_string(), "utf8".to_string());
-    }
-
-    Ok((data, headers))
-}
-
-fn normalize_headers(
-    headers: Option<HashMap<String, String>>,
-    additional_headers: HashMap<String, String>,
-) -> PyResult<HashMap<String, String>> {
-    let mut final_headers = HashMap::new();
-    for (key, value) in additional_headers {
-        final_headers.insert(key, value);
-    }
-    if let Some(headers) = headers {
-        for (key, value) in headers {
-            final_headers.insert(key, value);
-        }
-    }
-    Ok(final_headers)
 }
 
 struct PyFuture<T> {
