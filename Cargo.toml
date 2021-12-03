@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "envoy_mobile"
-crate-type = ["cdylib", "rlib"]
+name = "envoy_requests"
+crate-type = ["cdylib"]
 
 [dependencies]
 futures = "*"
