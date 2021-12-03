@@ -172,7 +172,7 @@ where
 }
 
 #[pymodule]
-fn envoy_mobile(py: Python, module: &PyModule) -> PyResult<()> {
+fn envoy_requests(py: Python, module: &PyModule) -> PyResult<()> {
     module.add_class::<Response>()?;
     module.add_class::<StreamErroredInformation>()?;
     module.add_function(wrap_pyfunction!(request, module)?)?;
