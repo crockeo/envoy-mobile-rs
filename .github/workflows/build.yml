@@ -20,7 +20,7 @@ jobs:
           && mv bazel-bin/libenvoy_mobile.so ../ \
           && cd ../ \
           && :
-      - uses: action/cache@v2
+      - uses: actions/cache@v2
         with:
           path: libenvoy_mobile.so
           key: ${{ runner.os }}-${{ hashFiles('./envoy-mobile/**') }}
