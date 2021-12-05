@@ -31,6 +31,8 @@ jobs:
         with:
           python-version: '3.8'
       - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: standard
       - name: Install maturin
         run: pip install maturin==0.12.1
       - name: Build wheel
