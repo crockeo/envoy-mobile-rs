@@ -7,7 +7,7 @@ jobs:
   build_wheel:
     name: build_wheel
     runs-on: ubuntu-20.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v1
         with:
