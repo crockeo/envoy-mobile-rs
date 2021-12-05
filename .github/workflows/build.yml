@@ -1,0 +1,31 @@
+name: build
+
+jobs:
+  build_wheel:
+    name: build_wheel
+    runs-on: ubuntu-20.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v1
+        with:
+          submodules: true
+      - name: Build libenvoy_mobile.so
+        run: |
+          : \
+          && cd envoy-mobile \
+          && ./bazelw build //:libenvoy_mobile.so \
+          && mv bazel-bin/libenvoy_mobile.so ../ \
+          && cd ../ \
+          && :
+      - uses: action/cache@v2
+        with:
+          path: libenvoy_mobile.so
+          key: ${{ runner.os }}-${{ hashFiles('./envoy-mobile/**') }}
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - uses: actions-rs/toolchains@v1
+      - name: Install maturin
+        run: pip install maturin==0.12.1
+      - name: Build wheel
+        run: maturin build
