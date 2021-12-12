@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Once;
+use std::str;
 use std::task::{Context, Poll};
 
 use pyo3::create_exception;
@@ -44,6 +45,21 @@ impl Default for Response {
             headers: HashMap::new(),
             data: Vec::new(),
         }
+    }
+}
+
+#[pymethods]
+impl Response {
+    fn __str__(&self) -> String {
+	if let Ok(data_str) = str::from_utf8(&self.data) {
+	    format!("Response(status={}, headers={:?}, data={})", self.status, self.headers, data_str)
+	} else {
+	    format!("Response(status={}, headers={:?}, data={:?})", self.status, self.headers, self.data)
+	}
+    }
+
+    fn __repr__(&self) -> String {
+	self.__str__()
     }
 }
 

@@ -19,15 +19,15 @@ class GeventChannel(Generic[T]):
         self.hub.loop.run_callback_threadsafe(self._put_impl, value)
 
     def _put_impl(self, value: T) -> None:
-        if value is not None:
-            raise Exception()
+        if self.value is not None:
+            raise Exception("attempting to re-put value")
 
         self.value = value
         self.watcher.send()
 
     def get(self) -> T:
         if self.consumed:
-            raise Exception()
+            raise Exception("attempting to re-get value")
         while self.value is None:
             self.hub.wait(self.watcher)
         self.consumed = True
